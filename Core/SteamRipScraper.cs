@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Linq;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+
 namespace SteamRipApp.Core
 {
     public class SearchResult : INotifyPropertyChanged
@@ -22,6 +23,7 @@ namespace SteamRipApp.Core
         private bool _isDownloading = false;
         private double _downloadProgress = 0;
         private string _downloadStatus = "Preparing...";
+
         public string Title { get => _title; set { _title = value; OnPropertyChanged(); } }
         public string Url { get => _url; set { _url = value; OnPropertyChanged(); } }
         public string ImageUrl { get => _imageUrl; set { _imageUrl = value; OnPropertyChanged(); } }
@@ -35,10 +37,12 @@ namespace SteamRipApp.Core
         public double DownloadProgress { get => _downloadProgress; set { _downloadProgress = value; OnPropertyChanged(); } }
         public string DownloadStatus { get => _downloadStatus; set { _downloadStatus = value; OnPropertyChanged(); } }
         public System.Collections.Generic.List<string>? GoFileDirectLinks { get; set; }
+
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
+
     public class GameDetails
     {
         public string LatestVersion { get; set; } = "Unknown";
@@ -51,15 +55,18 @@ namespace SteamRipApp.Core
         public Dictionary<string, string> SystemRequirements { get; set; } = new Dictionary<string, string>();
         public Dictionary<string, string> GameInfo { get; set; } = new Dictionary<string, string>();
     }
+
     public static class SteamRipScraper
     {
         private static readonly HttpClient client;
         private const string BaseUrl = "https://steamrip.com/";
+
         static SteamRipScraper()
         {
             client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36");
         }
+
         public static async Task<GameDetails> GetGameDetailsAsync(string pageUrl)
         {
             var details = new GameDetails();
@@ -67,12 +74,13 @@ namespace SteamRipApp.Core
                 var html = await client.GetStringAsync(pageUrl);
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
-                var infoList = doc.DocumentNode.SelectNodes("
+
+                var infoList = doc.DocumentNode.SelectNodes("//ul[contains(@class, 'post-info')]/li");
                 if (infoList != null)
                 {
                     foreach (var li in infoList)
                     {
-                        var strong = li.SelectSingleNode(".
+                        var strong = li.SelectSingleNode(".//strong");
                         if (strong != null)
                         {
                             var key = strong.InnerText.Replace(":", "").Trim();
@@ -99,18 +107,20 @@ namespace SteamRipApp.Core
                         }
                     }
                 }
+
                 if (details.LatestVersion == "Unknown")
                 {
-                    var tagMeta = doc.DocumentNode.SelectNodes("
+                    var tagMeta = doc.DocumentNode.SelectNodes("//div[contains(@class, 'tag-meta')]/a");
                     if (tagMeta != null && tagMeta.Count > 0)
                         details.LatestVersion = tagMeta[0].InnerText.Trim();
                 }
-                var reqList = doc.DocumentNode.SelectNodes("
+
+                var reqList = doc.DocumentNode.SelectNodes("//div[contains(@class, 'system-requirements')]//li");
                 if (reqList != null)
                 {
                     foreach (var li in reqList)
                     {
-                        var strong = li.SelectSingleNode(".
+                        var strong = li.SelectSingleNode(".//strong");
                         if (strong != null)
                         {
                             var key = strong.InnerText.Replace(":", "").Trim();
@@ -124,6 +134,7 @@ namespace SteamRipApp.Core
             }
             return details;
         }
+
         public static async Task<List<SearchResult>> SearchAsync(string query)
         {
             var results = new List<SearchResult>();
@@ -132,45 +143,56 @@ namespace SteamRipApp.Core
                 var searchUrl = $"{BaseUrl}?s={Uri.EscapeDataString(query)}";
                 var response = await client.GetAsync(searchUrl);
                 Logger.Log($"[Search] HTTP Response: {response.StatusCode}");
+
                 if (!response.IsSuccessStatusCode) {
                     Logger.LogError("SearchAsync", new Exception($"HTTP Error: {response.StatusCode}"));
                     return results;
                 }
+
                 var html = await response.Content.ReadAsStringAsync();
                 Logger.Log($"[Search] HTML Length: {html.Length} characters.");
+
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
-                var postNodes = doc.DocumentNode.SelectNodes("
+
+                var postNodes = doc.DocumentNode.SelectNodes("//article[contains(@class, 'post')]");
                 IEnumerable<HtmlNode> posts = postNodes?.AsEnumerable() ?? Enumerable.Empty<HtmlNode>();
+
                 if (postNodes == null) {
-                    posts = doc.DocumentNode.SelectNodes("
+                    posts = doc.DocumentNode.SelectNodes("//div[contains(@class, 'post-item')]");
                 }
+
                 if (posts != null)
                 {
                     Logger.Log($"[Search] Found {posts.Count()} potential nodes.");
                     var seenUrls = new HashSet<string>();
                     foreach (var post in posts)
                     {
-                        var titleNode = post.Name == "a" ? post : post.SelectSingleNode(".
-                        var imgNode = post.SelectSingleNode(".
-                        var slideNode = post.SelectSingleNode(".
-                        var dateNode = post.SelectSingleNode(".
+                        var titleNode = post.Name == "a" ? post : post.SelectSingleNode(".//a");
+                        var imgNode = post.SelectSingleNode(".//img");
+                        var slideNode = post.SelectSingleNode(".//div[contains(@class, 'slide-image')]");
+                        var dateNode = post.SelectSingleNode(".//span[contains(@class, 'date')]");
+
                         if (titleNode != null)
                         {
                             var title = titleNode.InnerText.Trim();
                             if (string.IsNullOrEmpty(title)) 
                             {
-                                var h2Title = post.SelectSingleNode(".
+                                var h2Title = post.SelectSingleNode(".//h2");
                                 if (h2Title != null) title = h2Title.InnerText.Trim();
                             }
+
                             var urlString = titleNode.GetAttributeValue("href", "");
                             if (string.IsNullOrEmpty(urlString) || urlString.Contains("/category/") || urlString.EndsWith(".com/") || urlString.EndsWith(".com") || string.IsNullOrEmpty(title)) continue;
+
                             if (!urlString.StartsWith("http")) urlString = BaseUrl.TrimEnd('/') + "/" + urlString.TrimStart('/');
                             if (!seenUrls.Add(urlString)) continue; 
+
                             var imgUrl = slideNode?.GetAttributeValue("data-back", "") ?? imgNode?.GetAttributeValue("src", "") ?? "";
                             if (string.IsNullOrEmpty(imgUrl) && imgNode != null) {
                                 imgUrl = imgNode.GetAttributeValue("data-lazy-src", "") != "" ? imgNode.GetAttributeValue("data-lazy-src", "") : imgNode.GetAttributeValue("data-src", "");
                             }
+
                             if (string.IsNullOrEmpty(imgUrl))
                             {
                                 imgUrl = "https://steamrip.com/wp-content/uploads/2021/06/Site-logo3.png";
@@ -179,6 +201,7 @@ namespace SteamRipApp.Core
                             {
                                 imgUrl = BaseUrl.TrimEnd('/') + "/" + imgUrl.TrimStart('/');
                             }
+
                             results.Add(new SearchResult
                             {
                                 Title = title,
@@ -195,6 +218,7 @@ namespace SteamRipApp.Core
             Logger.Log($"[Search] Completed. Returning {results.Count} results.");
             return results;
         }
+
         public static async Task<(bool found, string url)> CheckBuzzheavierAsync(string pageUrl)
         {
             try {
@@ -202,10 +226,12 @@ namespace SteamRipApp.Core
                 var html = await client.GetStringAsync(pageUrl);
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
-                var buzzLink = doc.DocumentNode.SelectNodes("
+
+                var buzzLink = doc.DocumentNode.SelectNodes("//a[contains(@href, 'buzzheavier') or contains(@href, 'bzzhr.to')]")?.FirstOrDefault();
+
                 if (buzzLink == null)
                 {
-                    var allAnchors = doc.DocumentNode.SelectNodes("
+                    var allAnchors = doc.DocumentNode.SelectNodes("//a");
                     if (allAnchors != null)
                     {
                         foreach (var a in allAnchors)
@@ -219,10 +245,11 @@ namespace SteamRipApp.Core
                         }
                     }
                 }
+
                 if (buzzLink != null)
                 {
                     var href = buzzLink.GetAttributeValue("href", "");
-                    if (href.StartsWith("
+                    if (href.StartsWith("//")) href = "https:" + href;
                     Logger.Log($"[Scraper] Buzzheavier link found: {href}");
                     return (true, href);
                 }
@@ -231,10 +258,12 @@ namespace SteamRipApp.Core
             }
             return (false, "");
         }
+
         public static async Task<(bool found, string pageUrl, List<string> directLinks)> CheckGoFileAsync(string steamRipPageUrl)
         {
             return await GoFileClient.CheckAndResolveAsync(steamRipPageUrl);
         }
+
         public static async Task<string> ExtractBuzzheavierDirectUrlAsync(string bzzhrUrl)
         {
             try {
@@ -245,9 +274,7 @@ namespace SteamRipApp.Core
                     request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
                     var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                     Logger.Log($"[Scraper] Buzzheavier API Status: {response.StatusCode}");
-                    foreach(var h in response.Headers) {
-                        Logger.Log($"[Scraper] Header: {h.Key} = {string.Join(", ", h.Value)}");
-                    }
+
                     if (response.Headers.TryGetValues("hx-redirect", out var values))
                     {
                         var directUrl = values.FirstOrDefault();
@@ -257,20 +284,22 @@ namespace SteamRipApp.Core
                             return directUrl;
                         }
                     }
+
                     if (response.Headers.Location != null) {
                         Logger.Log($"[Scraper] Successfully extracted direct URL (Location): {response.Headers.Location}");
                         return response.Headers.Location.ToString();
                     }
+
                     var html = await response.Content.ReadAsStringAsync();
-                    Logger.Log($"[Scraper] Buzzheavier HTML Snippet: {html.Substring(0, Math.Min(html.Length, 500))}");
                     var doc = new HtmlDocument();
                     doc.LoadHtml(html);
-                    var dlBtn = doc.DocumentNode.SelectNodes("
+
+                    var dlBtn = doc.DocumentNode.SelectNodes("//a[contains(@class, 'download-btn')]")?.FirstOrDefault();
                     if (dlBtn != null)
                     {
                         var href = dlBtn.GetAttributeValue("href", "");
                         if (!string.IsNullOrEmpty(href)) {
-                            if (href.StartsWith("
+                            if (href.StartsWith("//")) href = "https:" + href;
                             Logger.Log($"[Scraper] Found fallback direct URL via HTML: {href}");
                             return href;
                         }
@@ -282,6 +311,7 @@ namespace SteamRipApp.Core
             }
             return "";
         }
+
         public static async Task<string> SearchUrlByFolderNameAsync(string folderName)
         {
             try {
@@ -298,6 +328,7 @@ namespace SteamRipApp.Core
             }
             return "";
         }
+
         public static async Task<string> GetLatestVersionAsync(string pageUrl)
         {
             try {
@@ -309,4 +340,3 @@ namespace SteamRipApp.Core
         }
     }
 }
-

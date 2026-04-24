@@ -161,11 +161,11 @@ namespace SteamRipApp.Core
                 var doc = new HtmlAgilityPack.HtmlDocument();
                 doc.LoadHtml(html);
                 var goFileNode = doc.DocumentNode
-                    .SelectNodes("
+                    .SelectNodes("//a[contains(@href, 'gofile.io')]")
                     ?.FirstOrDefault();
                 if (goFileNode == null)
                 {
-                    var allLinks = doc.DocumentNode.SelectNodes("
+                    var allLinks = doc.DocumentNode.SelectNodes("//a");
                     if (allLinks != null)
                     {
                         foreach (var a in allLinks)
@@ -197,7 +197,7 @@ namespace SteamRipApp.Core
                 {
                     href = goFileNode.GetAttributeValue("href", "");
                 }
-                if (href.StartsWith("
+                if (href.StartsWith("//")) href = "https:" + href;
                 if (!href.StartsWith("http") && href.Contains("gofile.io")) href = "https://" + href.TrimStart('/');
                 Logger.Log($"[GoFile] Found GoFile page link: {href}");
                 var directLinks = await GetDirectLinksAsync(href);

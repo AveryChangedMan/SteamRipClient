@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+
 namespace SteamRipApp.Core
 {
     public static class NativeBridgeService
@@ -18,8 +19,10 @@ namespace SteamRipApp.Core
         private static bool _isRunning;
         private static readonly List<string> _logs = new List<string>();
         private static readonly List<WebSocket> _activeClients = new List<WebSocket>();
+
         public static event Action<string, string>? OnLog; 
         public static bool IsRunning => _isRunning;
+
         public static void Start()
         {
             if (_isRunning) return;
@@ -33,6 +36,7 @@ namespace SteamRipApp.Core
             Task.Run(() => RunWebSocketHub(_cts.Token));
             Task.Run(() => RunServiceMonitor(_cts.Token));
         }
+
         public static void Stop()
         {
             Log("Stopping Steam Integration Service...", "SYSTEM");
@@ -51,6 +55,7 @@ namespace SteamRipApp.Core
                 _activeClients.Clear();
             }
         }
+
         public static void Log(string message, string category = "GENERAL")
         {
             string timestamped = $"[{DateTime.Now:HH:mm:ss}] [{category}] {message}";
@@ -62,6 +67,7 @@ namespace SteamRipApp.Core
             Logger.Log(timestamped);
             _ = BroadcastLog(timestamped, category);
         }
+
         private static async Task BroadcastLog(string log, string category)
         {
             byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { action = "log", message = log, category = category }));
@@ -77,6 +83,7 @@ namespace SteamRipApp.Core
                 }
             }
         }
+
         private static void SetupResources()
         {
             try {
@@ -85,6 +92,7 @@ namespace SteamRipApp.Core
                 foreach (var folder in folders) {
                     string targetDir = Path.Combine(localAppData, folder);
                     if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
+
                     string sourceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, folder);
                     if (Directory.Exists(sourceDir)) {
                         foreach (string file in Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories)) {
@@ -102,6 +110,7 @@ namespace SteamRipApp.Core
                 Logger.LogError("SetupResources", ex);
             }
         }
+
         private static string GetDynamicScript()
         {
             string userJs = "";
@@ -113,6 +122,7 @@ namespace SteamRipApp.Core
                     userJs = File.ReadAllText(jsPath);
                 }
             } catch { }
+
             return "(function() {\n" +
                    "    if (window._steamIntegrationInjected) return;\n" +
                    "    window._steamIntegrationInjected = true;\n" +
@@ -141,7 +151,7 @@ namespace SteamRipApp.Core
                    "                if (window.__steamPlayHijackerObserver) window.__steamPlayHijackerObserver.disconnect();\n" +
                    "                document.querySelectorAll('[data-hijacked]').forEach(el => {\n" +
                    "                    el.removeAttribute('data-hijacked');\n" +
-                   "                    location.reload(); 
+                   "                    location.reload();\n" +
                    "                });\n" +
                    "                window._steamIntegrationInjected = false;\n" +
                    "                clearInterval(_mainInterval);\n" +
@@ -166,6 +176,7 @@ namespace SteamRipApp.Core
                    userJs + "\n" +
                    "})();";
         }
+
         private static async Task RunServiceMonitor(CancellationToken token)
         {
             SetupResources();
@@ -212,6 +223,7 @@ namespace SteamRipApp.Core
                 await Task.Delay(1000, token);
             }
         }
+
         private static async Task RunWebSocketHub(CancellationToken token)
         {
             try {
@@ -227,6 +239,7 @@ namespace SteamRipApp.Core
                 _isRunning = false;
                 return;
             }
+
             while (!token.IsCancellationRequested && _isRunning)
             {
                 try {
@@ -245,6 +258,7 @@ namespace SteamRipApp.Core
                 }
             }
         }
+
         private static async Task HandleConnection(WebSocket socket, CancellationToken token)
         {
             lock (_activeClients) _activeClients.Add(socket);
@@ -254,6 +268,7 @@ namespace SteamRipApp.Core
                 {
                     var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), token);
                     if (result.MessageType == WebSocketMessageType.Close) break;
+
                     if (result.MessageType == WebSocketMessageType.Text)
                     {
                         string msg = Encoding.UTF8.GetString(buffer, 0, result.Count);
@@ -268,6 +283,7 @@ namespace SteamRipApp.Core
                                     Log($"{logMsg}", "INTERFACE");
                                     continue;
                                 }
+
                                 if (action == "launch")
                                 {
                                     string steamPath = SteamManager.GetSteamPath() ?? "";
@@ -277,104 +293,114 @@ namespace SteamRipApp.Core
                                     if (doc.RootElement.TryGetProperty("url", out var urlProp)) url = urlProp.GetString() ?? "";
                                     string appId = "";
                                     if (doc.RootElement.TryGetProperty("appId", out var appIdProp)) appId = appIdProp.GetString() ?? "";
-                            Log($"Launch request: {title} (AppID: {appId})", "LAUNCHER");
-                            if (string.IsNullOrEmpty(title) || title == "Steam" || title == "Steam Big Picture Mode")
-                            {
-                                var matchApp = System.Text.RegularExpressions.Regex.Match(url, @"/(app|details)/([0-9]+)");
-                                if (matchApp.Success)
-                                {
-                                    string appIdStr = matchApp.Groups[2].Value;
-                                    var game = GlobalSettings.Library.FirstOrDefault(g => 
-                                        (g.Url != null && g.Url.Contains(appIdStr)) || 
-                                        (g.LocalPath != null && g.LocalPath.Contains(appIdStr)));
-                                    if (game != null) title = game.Title;
-                                    else {
-                                        string acfPath = Path.Combine(steamPath, "steamapps", $"appmanifest_{appIdStr}.acf");
-                                        if (File.Exists(acfPath))
+
+                                    Log($"Launch request: {title} (AppID: {appId})", "LAUNCHER");
+
+                                    if (string.IsNullOrEmpty(title) || title == "Steam" || title == "Steam Big Picture Mode")
+                                    {
+                                        var matchApp = System.Text.RegularExpressions.Regex.Match(url, @"/(app|details)/([0-9]+)");
+                                        if (matchApp.Success)
                                         {
-                                            string acf = File.ReadAllText(acfPath);
-                                            var nameMatch = System.Text.RegularExpressions.Regex.Match(acf, @"""name""\s+""([^""]+)""");
-                                            if (nameMatch.Success) title = nameMatch.Groups[1].Value;
+                                            string appIdStr = matchApp.Groups[2].Value;
+                                            var game = GlobalSettings.Library.FirstOrDefault(g => 
+                                                (g.Url != null && g.Url.Contains(appIdStr)) || 
+                                                (g.LocalPath != null && g.LocalPath.Contains(appIdStr)));
+                                            if (game != null) title = game.Title;
+                                            else {
+                                                string acfPath = Path.Combine(steamPath, "steamapps", $"appmanifest_{appIdStr}.acf");
+                                                if (File.Exists(acfPath))
+                                                {
+                                                    string acf = File.ReadAllText(acfPath);
+                                                    var nameMatch = System.Text.RegularExpressions.Regex.Match(acf, @"""name""\s+""([^""]+)""");
+                                                    if (nameMatch.Success) title = nameMatch.Groups[1].Value;
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                            }
-                            if ((string.IsNullOrEmpty(title) || title == "Steam") && !string.IsNullOrEmpty(appId))
-                            {
-                                var libGame = GlobalSettings.Library.FirstOrDefault(g => 
-                                    (g.ManualSteamAppId?.ToString() ?? g.SteamAppId?.ToString()) == appId);
-                                if (libGame != null) title = libGame.Title;
-                            }
-                            bool mappingFound = false;
-                            ulong mappedLongId = 0;
-                            if (!string.IsNullOrEmpty(appId) && GlobalSettings.MemoryTable.TryGetValue(appId, out var mappedIdStr))
-                            {
-                                if (ulong.TryParse(mappedIdStr, out mappedLongId))
-                                {
-                                    Log($"Mapping found: {appId} -> {mappedLongId}", "LAUNCHER");
-                                    mappingFound = true;
-                                }
-                            }
-                            Log($"Launching '{title}' (AppID: {appId})...", "LAUNCHER");
-                            string userId = GlobalSettings.SelectedSteamAccountId;
-                            if (string.IsNullOrEmpty(userId)) userId = SteamManager.GetSteamUserIds(steamPath).FirstOrDefault() ?? "";
-                            string vdfPath = Path.Combine(steamPath, "userdata", userId, "config", "shortcuts.vdf");
-                            bool launched = false;
-                            if (mappingFound)
-                            {
-                                string targetTitle = title;
-                                var mappedGame = GlobalSettings.Library.FirstOrDefault(g => 
-                                    (g.ManualSteamAppId?.ToString() ?? g.SteamAppId?.ToString()) == appId);
-                                if (mappedGame != null) 
-                                {
-                                    targetTitle = mappedGame.Title;
-                                    bool titleMatch = title.Contains(targetTitle, StringComparison.OrdinalIgnoreCase) || 
-                                                     targetTitle.Contains(title, StringComparison.OrdinalIgnoreCase) ||
-                                                     (title == "Steam") || (title == "Steam Big Picture Mode");
-                                    if (!titleMatch)
+
+                                    if ((string.IsNullOrEmpty(title) || title == "Steam") && !string.IsNullOrEmpty(appId))
                                     {
-                                        Log($"Conflict detected: {title} vs {targetTitle}. Skipping mapping.", "LAUNCHER");
-                                        mappingFound = false;
+                                        var libGame = GlobalSettings.Library.FirstOrDefault(g => 
+                                            (g.ManualSteamAppId?.ToString() ?? g.SteamAppId?.ToString()) == appId);
+                                        if (libGame != null) title = libGame.Title;
+                                    }
+
+                                    bool mappingFound = false;
+                                    ulong mappedLongId = 0;
+                                    if (!string.IsNullOrEmpty(appId) && GlobalSettings.MemoryTable.TryGetValue(appId, out var mappedIdStr))
+                                    {
+                                        if (ulong.TryParse(mappedIdStr, out mappedLongId))
+                                        {
+                                            Log($"Mapping found: {appId} -> {mappedLongId}", "LAUNCHER");
+                                            mappingFound = true;
+                                        }
+                                    }
+
+                                    Log($"Launching '{title}' (AppID: {appId})...", "LAUNCHER");
+                                    string userId = GlobalSettings.SelectedSteamAccountId;
+                                    if (string.IsNullOrEmpty(userId)) userId = SteamManager.GetSteamUserIds(steamPath).FirstOrDefault() ?? "";
+                                    string vdfPath = Path.Combine(steamPath, "userdata", userId, "config", "shortcuts.vdf");
+
+                                    bool launched = false;
+                                    if (mappingFound)
+                                    {
+                                        string targetTitle = title;
+                                        var mappedGame = GlobalSettings.Library.FirstOrDefault(g => 
+                                            (g.ManualSteamAppId?.ToString() ?? g.SteamAppId?.ToString()) == appId);
+                                        if (mappedGame != null) 
+                                        {
+                                            targetTitle = mappedGame.Title;
+                                            bool titleMatch = title.Contains(targetTitle, StringComparison.OrdinalIgnoreCase) || 
+                                                             targetTitle.Contains(title, StringComparison.OrdinalIgnoreCase) ||
+                                                             (title == "Steam") || (title == "Steam Big Picture Mode");
+
+                                            if (!titleMatch)
+                                            {
+                                                Log($"Conflict detected: {title} vs {targetTitle}. Skipping mapping.", "LAUNCHER");
+                                                mappingFound = false;
+                                            }
+                                        }
+                                        if (mappingFound)
+                                        {
+                                            Log($"Launching via Steam ID: {mappedLongId}", "LAUNCHER");
+                                            Process.Start(new ProcessStartInfo {
+                                                FileName = $"steam://rungameid/{mappedLongId}",
+                                                UseShellExecute = true
+                                            });
+                                            launched = true;
+                                        }
+                                    }
+
+                                    if (!launched && !string.IsNullOrEmpty(title) && title != "Steam" && File.Exists(vdfPath))
+                                    {
+                                        var shortcuts = VdfUtility.ReadShortcuts(vdfPath);
+                                        var match = shortcuts.FirstOrDefault(s => string.Equals(s.AppName, title, StringComparison.OrdinalIgnoreCase));
+                                        if (match == null) match = shortcuts.FirstOrDefault(s => s.AppName?.StartsWith(title, StringComparison.OrdinalIgnoreCase) == true);
+                                        if (match == null) match = shortcuts.FirstOrDefault(s => !string.IsNullOrEmpty(s.AppName) && (title.Contains(s.AppName, StringComparison.OrdinalIgnoreCase) || s.AppName.Contains(title, StringComparison.OrdinalIgnoreCase)));
+                                        
+                                        if (match != null)
+                                        {
+                                            ulong longId = SteamManager.CalculateLongId(match.AppID);
+                                            Log($"Shortcut found in config. Launching: {longId}", "CONFIG");
+                                            Process.Start(new ProcessStartInfo {
+                                                FileName = $"steam://rungameid/{longId}",
+                                                UseShellExecute = true
+                                            });
+                                            launched = true;
+                                        }
+                                    }
+
+                                    if (!launched)
+                                    {
+                                        Log($"Unable to find shortcut for '{title}'. Please add it manually to Steam.", "CONFIG");
                                     }
                                 }
-                                if (mappingFound)
-                                {
-                                    Log($"Launching via Steam ID: {mappedLongId}", "LAUNCHER");
-                                    Process.Start(new ProcessStartInfo {
-                                        FileName = $"steam://rungameid/{mappedLongId}",
-                                        UseShellExecute = true
-                                    });
-                                    launched = true;
-                                }
                             }
-                            if (!launched && !string.IsNullOrEmpty(title) && title != "Steam" && File.Exists(vdfPath))
-                            {
-                                var shortcuts = VdfUtility.ReadShortcuts(vdfPath);
-                                var match = shortcuts.FirstOrDefault(s => string.Equals(s.AppName, title, StringComparison.OrdinalIgnoreCase));
-                                if (match == null) match = shortcuts.FirstOrDefault(s => s.AppName?.StartsWith(title, StringComparison.OrdinalIgnoreCase) == true);
-                                if (match == null) match = shortcuts.FirstOrDefault(s => !string.IsNullOrEmpty(s.AppName) && (title.Contains(s.AppName, StringComparison.OrdinalIgnoreCase) || s.AppName.Contains(title, StringComparison.OrdinalIgnoreCase)));
-                                if (match != null)
-                                {
-                                    ulong longId = SteamManager.CalculateLongId(match.AppID);
-                                    Log($"Shortcut found in config. Launching: {longId}", "CONFIG");
-                                    Process.Start(new ProcessStartInfo {
-                                        FileName = $"steam://rungameid/{longId}",
-                                        UseShellExecute = true
-                                    });
-                                    launched = true;
-                                }
-                            }
-                                if (!launched)
-                                {
-                                    Log($"Unable to find shortcut for '{title}'. Please add it manually to Steam.", "CONFIG");
-                                }
-                            }
+                        } catch (Exception ex) {
+                            Logger.LogError("LaunchRedirect", ex);
                         }
-                    } catch (Exception ex) {
-                        Logger.LogError("LaunchRedirect", ex);
                     }
                 }
-            }
             } catch { }
             finally {
                 lock (_activeClients) _activeClients.Remove(socket);
@@ -383,6 +409,7 @@ namespace SteamRipApp.Core
                 }
             }
         }
+
         private static string? GetCommandLine(Process process)
         {
             try {
@@ -392,14 +419,17 @@ namespace SteamRipApp.Core
                 return objects.Cast<System.Management.ManagementBaseObject>().FirstOrDefault()?["CommandLine"]?.ToString();
             } catch { return null; }
         }
+
         public static async Task<bool> IntegrateGame(string localPath, int appId, string title, int? oldAppId = null)
         {
             try {
                 string? steamPath = SteamManager.GetSteamPath();
                 if (string.IsNullOrEmpty(steamPath)) return false;
+
                 string commonPath = Path.Combine(steamPath, "steamapps", "common");
                 string steamappsPath = Path.Combine(steamPath, "steamapps");
                 string targetDir = Path.Combine(commonPath, title);
+
                 if (oldAppId.HasValue && oldAppId.Value != appId)
                 {
                     Log($"Updating identity: {oldAppId} -> {appId}", "SYSTEM");
@@ -411,22 +441,28 @@ namespace SteamRipApp.Core
                     }
                     RemoveManifest(oldAppId.Value);
                 }
+
                 Log($"Linking folder: {title}...", "DISK");
                 if (!EstablishSymlink(localPath, targetDir)) return false;
+
                 Log($"Registering game with ID {appId}...", "CONFIG");
                 WriteSteamManifest(steamappsPath, appId, title);
+
                 Log($"Applying Goldberg patch for ID {appId}...", "PATCH");
                 await ApplyGoldbergPatchAsync(localPath, appId);
+
                 return true;
             } catch (Exception ex) {
                 Logger.LogError("IntegrateGame", ex);
                 return false;
             }
         }
+
         public static bool EstablishSymlink(string source, string target)
         {
             return BatchSymlinks(new List<(string, string)> { (source, target) });
         }
+
         public static bool BatchSymlinks(List<(string source, string target)> links)
         {
             try {
@@ -441,24 +477,31 @@ namespace SteamRipApp.Core
                     }
                     linksToCreate.Add(link);
                 }
+
                 if (linksToCreate.Count == 0) return true;
+
                 var sb = new StringBuilder();
                 foreach (var link in linksToCreate) sb.Append($"New-Item -ItemType SymbolicLink -Path '{link.target}' -Target '{link.source}'; ");
+
                 var startInfo = new ProcessStartInfo {
                     FileName = "powershell.exe",
                     Arguments = $"-Command \"{sb}\"",
                     UseShellExecute = true,
                     WindowStyle = ProcessWindowStyle.Hidden
                 };
+
                 if (!SteamManager.IsRunningAsAdmin()) startInfo.Verb = "runas";
+
                 var proc = Process.Start(startInfo);
                 proc?.WaitForExit();
+
                 return linksToCreate.All(l => Directory.Exists(l.target));
             } catch (Exception ex) {
                 Logger.LogError("BatchSymlink", ex);
                 return false;
             }
         }
+
         private static void WriteSteamManifest(string steamappsPath, int appId, string title)
         {
             string manifestPath = Path.Combine(steamappsPath, $"appmanifest_{appId}.acf");
@@ -478,6 +521,7 @@ namespace SteamRipApp.Core
 }}";
             File.WriteAllText(manifestPath, content);
         }
+
         public static void RemoveManifest(int appId)
         {
             try {
@@ -491,18 +535,21 @@ namespace SteamRipApp.Core
                 }
             } catch { }
         }
+
         public static async Task ApplyGoldbergPatchAsync(string gamePath, int appId)
         {
             try {
                 Log($"Scanning for Steam API files...", "PATCH");
                 string source64 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Emulator", "steam_api64.dll");
                 string source32 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Emulator", "steam_api.dll");
+
                 if (!Directory.Exists(gamePath)) return;
                 var enumOptions = new EnumerationOptions { 
                     IgnoreInaccessible = true, 
                     RecurseSubdirectories = true,
                     AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System
                 };
+
                 var files = await Task.Run(() => Directory.GetFiles(gamePath, "steam_api*.dll", enumOptions).ToList());
                 if (files.Count == 0)
                 {
@@ -510,11 +557,13 @@ namespace SteamRipApp.Core
                     if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
                         files = await Task.Run(() => Directory.GetFiles(parent, "steam_api*.dll", enumOptions).ToList());
                 }
+
                 foreach (var dll in files)
                 {
                     string fileName = Path.GetFileName(dll).ToLower();
                     string? dir = Path.GetDirectoryName(dll);
                     if (string.IsNullOrEmpty(dir)) continue; 
+
                     string bak = dll + ".bak";
                     try {
                         if (!File.Exists(bak)) File.Move(dll, bak);
@@ -524,6 +573,7 @@ namespace SteamRipApp.Core
                             Log($"Patching {fileName}...", "PATCH");
                             File.Copy(source, dll, true);
                             await File.WriteAllTextAsync(Path.Combine(dir, "steam_appid.txt"), appId.ToString());
+
                             string receiptPath = Path.Combine(gamePath, "PatchLog.txt");
                             string receiptContent = $"Title: {Path.GetFileName(gamePath)}\nID: {appId}\nDate: {DateTime.Now}\nStatus: Patched";
                             await File.WriteAllTextAsync(receiptPath, receiptContent);
@@ -536,53 +586,64 @@ namespace SteamRipApp.Core
                 Logger.LogError("ApplyGoldbergPatch", ex);
             }
         }
+
         public static async Task ReverseGoldbergPatchAsync(string gamePath)
         {
             try {
                 Log($"Scanning for patched files to reverse...", "PATCH");
                 if (!Directory.Exists(gamePath)) return;
+
                 var enumOptions = new EnumerationOptions { 
                     IgnoreInaccessible = true, 
                     RecurseSubdirectories = true,
                     AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System
                 };
+
                 var files = await Task.Run(() => Directory.GetFiles(gamePath, "steam_api*.dll.bak", enumOptions).ToList());
                 foreach (var bak in files)
                 {
                     string dll = bak.Substring(0, bak.Length - 4);
                     string? dir = Path.GetDirectoryName(bak);
                     if (string.IsNullOrEmpty(dir)) continue;
+
                     try {
                         if (File.Exists(dll)) File.Delete(dll);
                         File.Move(bak, dll);
                         Log($"Restored {Path.GetFileName(dll)}", "PATCH");
+
                         string appIdFile = Path.Combine(dir, "steam_appid.txt");
                         if (File.Exists(appIdFile)) File.Delete(appIdFile);
                     } catch (Exception ex) {
                         Logger.LogError($"Reverse_Patch_DLL_{Path.GetFileName(bak)}", ex);
                     }
                 }
+
                 string receiptPath = Path.Combine(gamePath, "PatchLog.txt");
                 if (File.Exists(receiptPath)) File.Delete(receiptPath);
                 string legacyReceipt = Path.Combine(gamePath, "GBinitTimeStamp.txt");
                 if (File.Exists(legacyReceipt)) File.Delete(legacyReceipt);
+
                 Log("Goldberg patch reversed successfully.", "PATCH");
             } catch (Exception ex) {
                 Logger.LogError("ReverseGoldbergPatch", ex);
             }
         }
+
         public static void HideWorkerShortcuts()
         {
             try {
                 string? steamPath = SteamManager.GetSteamPath();
                 if (string.IsNullOrEmpty(steamPath)) return;
+
                 var userIds = string.IsNullOrEmpty(GlobalSettings.SelectedSteamAccountId)
                               ? SteamManager.GetSteamUserIds(steamPath)
                               : new List<string> { GlobalSettings.SelectedSteamAccountId };
+
                 foreach (var userId in userIds)
                 {
                     string vdfPath = Path.Combine(steamPath, "userdata", userId, "config", "shortcuts.vdf");
                     if (!File.Exists(vdfPath)) continue;
+
                     var shortcuts = VdfUtility.ReadShortcuts(vdfPath);
                     foreach (var s in shortcuts)
                     {
@@ -592,10 +653,10 @@ namespace SteamRipApp.Core
                 }
             } catch { }
         }
+
         public static List<string> GetLogs()
         {
             lock (_logs) return new List<string>(_logs);
         }
     }
 }
-
