@@ -4,6 +4,7 @@ obj/
 
 # Installer and distribution files
 Dist/
+Releases/
 *.msix
 *.appx
 *.msixbundle
