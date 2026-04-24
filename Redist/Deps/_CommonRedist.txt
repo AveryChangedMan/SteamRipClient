@@ -1,0 +1,100 @@
+# =========================================================================
+# COMPREHENSIVE REDISTRIBUTABLE FILENAME LIST
+# Found in _CommonRedist, Redist, and scene repack folders
+# =========================================================================
+
+# --- MICROSOFT VISUAL C++ (VC++ / MSVC) ---
+vcredist_x86.exe
+vcredist_x64.exe
+vcredist_2005_x86.exe
+vcredist_2005_x64.exe
+vcredist_2005_sp1_x86.exe
+vcredist_2005_sp1_x64.exe
+vcredist_2008_x86.exe
+vcredist_2008_x64.exe
+vcredist_2008_sp1_x86.exe
+vcredist_2008_sp1_x64.exe
+vcredist_2010_x86.exe
+vcredist_2010_x64.exe
+vcredist_2010_sp1_x86.exe
+vcredist_2010_sp1_x64.exe
+vcredist_2012_x86.exe
+vcredist_2012_x64.exe
+vcredist_2012_update4_x86.exe
+vcredist_2012_update4_x64.exe
+vcredist_2013_x86.exe
+vcredist_2013_x64.exe
+vc_redist.x86.exe
+vc_redist.x64.exe
+vc_redist.arm64.exe
+vcredist_2015-2019_x86.exe
+vcredist_2015-2019_x64.exe
+vcredist_2015-2022_x86.exe
+vcredist_2015-2022_x64.exe
+VisualCppRedist_AIO_x86_x64.exe
+vcredist_x86_vs2015.exe
+en_visual_cpp_redistributable_for_visual_studio_2012_update_4_x64.exe
+
+# --- DIRECTX & GRAPHICS RUNTIMES ---
+dxwebsetup.exe
+DXSETUP.exe
+directx_Jun2010_redist.exe
+directx_9c_redist.exe
+VulkanRT-Installer.exe
+VulkanRT-Setup.exe
+Aug2009_D3DCompiler_42_x64.cab
+Jun2010_d3dx11_43_x86.cab
+Feb2010_XAudio_x64.cab
+
+# --- .NET FRAMEWORK & XNA ---
+dotNetFx35setup.exe
+dotNetFx40_Full_setup.exe
+dotNetFx40_Full_x86_x64.exe
+dotNetFx45_Full_setup.exe
+NDP451-KB2858728-x86-x64-AllOS-ENU.exe
+NDP452-KB2901907-x86-x64-AllOS-ENU.exe
+NDP461-KB3102436-x86-x64-AllOS-ENU.exe
+NDP462-KB3151800-x86-x64-AllOS-ENU.exe
+NDP472-KB4054530-x86-x64-AllOS-ENU.exe
+NDP48-x86-x64-AllOS-ENU.exe
+xnafx30_redist.msi
+xnafx31_redist.msi
+xnafx40_redist.msi
+XNAGS40_setup.exe
+dotnet-sdk-3.1.416-win-x64.exe
+windowsdesktop-runtime-6.0.x-win-x64.exe
+
+# --- PHYSICS & ENGINE DEPENDENCIES ---
+PhysX_System_Software.exe
+PhysX_Legacy_System_Software.exe
+PhysX-9.19.0218-SystemSoftware.exe
+PhysX_9.10.0513_SystemSoftware.exe
+PhysX-9.12.1031-SystemSoftware.exe
+PhysX_9.13.1220_SystemSoftware.exe
+PhysX_9.21.0713_SystemSoftware.exe
+UE3Redist.exe
+UE4PrereqSetup_x64.exe
+UE4PrereqSetup_x86.exe
+
+# --- AUDIO RUNTIMES ---
+oalinst.exe
+OpenAL11.exe
+rapture3d_2.4.0_game.exe
+
+# --- GAMING SERVICES & CLIENTS ---
+Social-Club-Setup.exe
+GFWLClient.msi
+gfwlivesetup.exe
+OriginThinSetup.exe
+UplayInstaller.exe
+Rockstar-Games-Launcher.exe
+EADesktopInstaller.exe
+
+# --- MISC & COMPONENT UPDATES ---
+msxml.msi
+msxml6.msi
+WindowsInstaller-KB893803-v2-x86.exe
+vdf_driver_setup.exe
+instmsia.exe
+instmsiw.exe
+# =========================================================================

@@ -1,0 +1,32 @@
+{
+    "UserRoamingConfigStore": {
+        "Software": {
+            "Valve": {
+                "Steam": {
+                    "SurveyDate": "2020-10-19",
+                    "SurveyDateVersion": "5666285506882420540",
+                    "StartMenuShortcutCheck": "1",
+                    "DesktopShortcutCheck": "0",
+                    "Tools": {
+                        "1493710": {
+                            "Registered": "1"
+                        },
+                        "1070560": {
+                            "Registered": "1"
+                        }
+                    }
+                }
+            }
+        },
+        "JSClientStorage": {
+            "spotlight.review.291550": {
+                "rgPromptDismissals": "3",
+                "bWasAskedToRevise": "1"
+            },
+            "spotlight.review.730": {
+                "rgPromptDismissals": "3",
+                "bWasAskedToRevise": "0"
+            }
+        }
+    }
+}

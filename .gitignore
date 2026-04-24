@@ -1,0 +1,23 @@
+# .NET build outputs
+bin/
+obj/
+
+# Installer and distribution files
+Dist/
+*.msix
+*.appx
+*.msixbundle
+*.appxbundle
+*.appxupload
+
+# Redundant files
+Redundant/
+
+# IDE files
+.vs/
+*.user
+*.suo
+
+# Scratch files
+scratch/
+clean_comments.ps1
