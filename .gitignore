@@ -4,7 +4,6 @@ obj/
 
 # Installer and distribution files
 Dist/
-Releases/
 *.msix
 *.appx
 *.msixbundle
@@ -22,3 +21,6 @@ Redundant/
 # Scratch files
 scratch/
 clean_comments.ps1
+
+# Release artifacts
+Releases/
