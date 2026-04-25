@@ -6,17 +6,21 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+
 namespace SteamRipApp
 {
     public sealed partial class NativeBridgePage : Page
     {
         private ObservableCollection<string> _visibleLogs = new ObservableCollection<string>();
         private List<(string Message, string Category)> _allLogs = new List<(string, string)>();
+
         public NativeBridgePage()
         {
             this.InitializeComponent();
             LogList.ItemsSource = _visibleLogs;
             ServiceToggle.IsOn = GlobalSettings.IsSteamIntegrationEnabled;
+            
+            
             foreach (var log in NativeBridgeService.GetLogs()) 
             {
                 string cat = "GENERAL";
@@ -28,12 +32,16 @@ namespace SteamRipApp
                 else if (log.Contains("[PROCESS]")) cat = "PROCESS";
                 else if (log.Contains("[INTERFACE]")) cat = "INTERFACE";
                 else if (log.Contains("[GENERAL]")) cat = "GENERAL";
+                
                 ProcessIncomingLog(log, cat);
             }
+
             NativeBridgeService.OnLog += (msg, cat) => ProcessIncomingLog(msg, cat);
+
             LoadUsers();
             _ = StartWorkerMonitor();
         }
+
         private async Task StartWorkerMonitor()
         {
             while (true)
@@ -41,6 +49,7 @@ namespace SteamRipApp
                 try {
                     using var ws = new System.Net.WebSockets.ClientWebSocket();
                     await ws.ConnectAsync(new Uri("ws://localhost:8081"), default);
+                    
                     byte[] buffer = new byte[8192];
                     while (ws.State == System.Net.WebSockets.WebSocketState.Open)
                     {
@@ -61,11 +70,13 @@ namespace SteamRipApp
                 await Task.Delay(3000);
             }
         }
+
         private void ProcessIncomingLog(string msg, string category)
         {
             DispatcherQueue.TryEnqueue(() => {
                 _allLogs.Add((msg, category));
                 if (_allLogs.Count > 1000) _allLogs.RemoveAt(0);
+
                 if (IsCategoryVisible(category))
                 {
                     _visibleLogs.Add(msg);
@@ -74,6 +85,7 @@ namespace SteamRipApp
                 }
             });
         }
+
         private bool IsCategoryVisible(string category)
         {
             return category switch {
@@ -88,9 +100,11 @@ namespace SteamRipApp
                 _ => true
             };
         }
+
         private void Filter_Changed(object sender, RoutedEventArgs e)
         {
             if (_visibleLogs == null) return;
+            
             _visibleLogs.Clear();
             foreach (var log in _allLogs)
             {
@@ -101,10 +115,12 @@ namespace SteamRipApp
             }
             if (_visibleLogs.Count > 0) LogList.ScrollIntoView(_visibleLogs[_visibleLogs.Count - 1]);
         }
+
         private void LoadUsers()
         {
             var users = SteamManager.GetSteamUsers();
             UserSelector.ItemsSource = users;
+            
             if (!string.IsNullOrEmpty(GlobalSettings.SelectedSteamAccountId))
             {
                 var selected = users.Find(u => u.AccountId == GlobalSettings.SelectedSteamAccountId);
@@ -116,6 +132,7 @@ namespace SteamRipApp
                 UserSelector.SelectedItem = recent;
             }
         }
+
         private void UserSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (UserSelector.SelectedItem is SteamUser user)
@@ -124,14 +141,17 @@ namespace SteamRipApp
                 GlobalSettings.Save();
             }
         }
+
         private void ServiceToggle_Toggled(object sender, RoutedEventArgs e)
         {
             GlobalSettings.IsSteamIntegrationEnabled = ServiceToggle.IsOn;
             GlobalSettings.Save();
+
             if (ServiceToggle.IsOn) {
                 NativeBridgeService.Start();
             } else {
                 NativeBridgeService.Stop();
+                
                 Task.Run(() => {
                     try {
                         var currentProcess = System.Diagnostics.Process.GetCurrentProcess();
@@ -143,6 +163,7 @@ namespace SteamRipApp
                 });
             }
         }
+
         private void KillService_Click(object sender, RoutedEventArgs e)
         {
             try {
@@ -150,6 +171,7 @@ namespace SteamRipApp
                 var existingWorkers = System.Diagnostics.Process.GetProcessesByName("SteamRipApp")
                     .Where(p => p.Id != currentProcess.Id)
                     .ToList();
+
                 foreach (var p in existingWorkers) p.Kill();
                 NativeBridgeService.Log("Background services reset.", "SYSTEM");
             } catch (Exception ex) {
@@ -158,4 +180,3 @@ namespace SteamRipApp
         }
     }
 }
-

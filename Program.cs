@@ -4,6 +4,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using SteamRipApp.Core;
+
 namespace SteamRipApp
 {
     public static class Program
@@ -17,7 +18,15 @@ namespace SteamRipApp
                 new ManualResetEvent(false).WaitOne();
                 return;
             }
+
             WinRT.ComWrappersSupport.InitializeComWrappers();
+
+            
+            if (!Microsoft.Windows.ApplicationModel.DynamicDependency.Bootstrap.TryInitialize(0x00010005, out int hr))
+            {
+                
+            }
+
             var instance = AppInstance.FindOrRegisterForKey("SteamRipAppMainInstance");
             if (instance.IsCurrent)
             {
@@ -30,6 +39,7 @@ namespace SteamRipApp
             }
             else
             {
+                
                 instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs()).AsTask().Wait();
             }
         }

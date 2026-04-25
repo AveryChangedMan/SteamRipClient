@@ -10,6 +10,7 @@ using Microsoft.Win32;
 using System.Linq;
 using System.Security.Principal;
 using System.Diagnostics;
+
 namespace SteamRipApp.Core
 {
     public class SteamAppIdResult
@@ -17,11 +18,13 @@ namespace SteamRipApp.Core
         public int id { get; set; }
         public string name { get; set; } = "";
     }
+
     public class SteamStoreSearchResponse
     {
         public int total { get; set; }
         public List<SteamAppIdResult> items { get; set; } = new List<SteamAppIdResult>();
     }
+
     public class SteamUser
     {
         public string Steam64Id { get; set; } = "";
@@ -30,9 +33,11 @@ namespace SteamRipApp.Core
         public string AccountId { get; set; } = ""; 
         public bool IsMostRecent { get; set; }
     }
+
     public static class SteamManager
     {
         private static readonly HttpClient _httpClient = new HttpClient();
+
         public static string? GetSteamPath()
         {
             try {
@@ -40,17 +45,21 @@ namespace SteamRipApp.Core
                 return key?.GetValue("SteamPath")?.ToString()?.Replace("/", "\\");
             } catch { return null; }
         }
+
         public static List<SteamUser> GetSteamUsers()
         {
             var users = new List<SteamUser>();
             var steamPath = GetSteamPath();
             if (string.IsNullOrEmpty(steamPath)) return users;
+
             string loginUsersPath = Path.Combine(steamPath, "config", "loginusers.vdf");
             if (!File.Exists(loginUsersPath)) return users;
+
             try {
                 string content = File.ReadAllText(loginUsersPath);
                 var lines = content.Split('\n');
                 SteamUser? currentUser = null;
+
                 foreach (var line in lines)
                 {
                     string trimmed = line.Trim().Replace("\"", "");
@@ -75,6 +84,7 @@ namespace SteamRipApp.Core
             }
             return users;
         }
+
         public static List<string> GetSteamUserIds(string steamPath)
         {
             var userIds = new List<string>();
@@ -89,11 +99,13 @@ namespace SteamRipApp.Core
             }
             return userIds;
         }
+
         public static bool IsSteamRunning()
         {
             var steamPath = GetSteamPath();
             if (string.IsNullOrEmpty(steamPath)) return false;
             string targetExe = Path.Combine(steamPath, "steam.exe").ToLower();
+
             var processes = Process.GetProcessesByName("steam");
             foreach (var p in processes)
             {
@@ -103,6 +115,7 @@ namespace SteamRipApp.Core
             }
             return false;
         }
+    
         public static void KillSteamProcess()
         {
             try {
@@ -116,6 +129,7 @@ namespace SteamRipApp.Core
                 }
             } catch { }
         }
+
         public static uint CalculateAppId(string exePath, string appName)
         {
             string input = exePath + appName;
@@ -123,10 +137,12 @@ namespace SteamRipApp.Core
             uint crc = Force.Crc32.Crc32Algorithm.Compute(bytes);
             return (crc | 0x80000000);
         }
+
         public static ulong CalculateLongId(uint appid)
         {
             return ((ulong)appid << 32) | 0x02000000;
         }
+
         public static async Task<int?> LookupAppIdAsync(string gameTitle)
         {
             try {
@@ -136,14 +152,19 @@ namespace SteamRipApp.Core
                 var response = JsonSerializer.Deserialize<SteamStoreSearchResponse>(json);
                 if (response?.items != null && response.items.Count > 0)
                 {
+                    
+                    
                     string cleanTitle = Regex.Replace(gameTitle, @"[^a-zA-Z0-9\s]", "").ToLower();
                     string[] titleWords = cleanTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    
                     var bestMatch = response.items[0];
                     int maxMatches = 0;
+
                     foreach (var item in response.items)
                     {
                         string cleanItemName = Regex.Replace(item.name, @"[^a-zA-Z0-9\s]", "").ToLower();
                         int matchCount = titleWords.Count(w => cleanItemName.Contains(w));
+                        
                         if (matchCount > maxMatches)
                         {
                             maxMatches = matchCount;
@@ -151,15 +172,18 @@ namespace SteamRipApp.Core
                         }
                         else if (matchCount == maxMatches && Math.Abs(item.name.Length - gameTitle.Length) < Math.Abs(bestMatch.name.Length - gameTitle.Length))
                         {
+                            
                             bestMatch = item;
                         }
                     }
+
                     NativeBridgeService.Log($"Matched: {bestMatch.name} (ID: {bestMatch.id}) with {maxMatches} word matches", "SYSTEM");
                     return bestMatch.id;
                 }
             } catch { }
             return null;
         }
+
         public static async Task DownloadAssetsAsync(int appId, uint shortcutId, string gridPath)
         {
             if (!Directory.Exists(gridPath)) Directory.CreateDirectory(gridPath);
@@ -169,6 +193,7 @@ namespace SteamRipApp.Core
                 (Url: $"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/logo.png", File: $"{shortcutId}_logo.png"),
                 (Url: $"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg", File: $"{shortcutId}.jpg")
             };
+
             foreach (var asset in assets)
             {
                 try {
@@ -177,6 +202,7 @@ namespace SteamRipApp.Core
                 } catch { }
             }
         }
+
         public static bool IsRunningAsAdmin()
         {
             try {
@@ -185,6 +211,7 @@ namespace SteamRipApp.Core
                 return principal.IsInRole(WindowsBuiltInRole.Administrator);
             } catch { return false; }
         }
+
         private static string FindGameRoot(string startPath)
         {
             string current = startPath;
@@ -193,6 +220,7 @@ namespace SteamRipApp.Core
                 "content", "plugins", "redist", "commonredist", "thirdparty", "steamworks", 
                 "steamv132", "steamv153", "steamv147", "steamv157" 
             };
+
             while (!string.IsNullOrEmpty(current) && Directory.Exists(current))
             {
                 string name = Path.GetFileName(current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).ToLower();
@@ -200,6 +228,7 @@ namespace SteamRipApp.Core
                 bool hasSubNoise = Directory.Exists(Path.Combine(current, "Binaries")) || Directory.Exists(Path.Combine(current, "Content"));
                 string parent = Path.GetDirectoryName(current) ?? "";
                 bool parentHasEngine = !string.IsNullOrEmpty(parent) && Directory.Exists(Path.Combine(parent, "Engine"));
+
                 if (isNoise || parentHasEngine || name.EndsWith("ue5") || name.EndsWith("ue4")) 
                 { 
                     current = parent; 
@@ -209,6 +238,7 @@ namespace SteamRipApp.Core
             }
             return current;
         }
+
         public static void RelaunchSteam(string steamPath)
         {
             try {
@@ -216,45 +246,55 @@ namespace SteamRipApp.Core
                 if (File.Exists(steamExe)) Process.Start(new ProcessStartInfo { FileName = steamExe, UseShellExecute = true });
             } catch { }
         }
+
         public static async Task<bool> ImportGameToSteam(string gameTitle, string exePath, int? steamAppId = null)
         {
             NativeBridgeService.Log($"Integrating: {gameTitle}", "SYSTEM");
             var steamPath = GetSteamPath();
             if (string.IsNullOrEmpty(steamPath)) return false;
+
             bool wasSteamOpen = IsSteamRunning();
             if (wasSteamOpen) 
             {
                 NativeBridgeService.Log("Steam is running. Restarting to apply integration changes...", "SYSTEM");
                 KillSteamProcess();
             }
+
             var allUserIds = GetSteamUserIds(steamPath);
             var userIds = !string.IsNullOrEmpty(GlobalSettings.SelectedSteamAccountId)
                           ? new List<string> { GlobalSettings.SelectedSteamAccountId }
                           : allUserIds;
             if (userIds.Count == 0) return false;
+
             string cleanExe = exePath.Trim('\"');
             string exeFolder = Path.GetDirectoryName(cleanExe) ?? "";
             string gameFolder = FindGameRoot(exeFolder);
             uint shortcutAppId = CalculateAppId(cleanExe, gameTitle);
             if (!steamAppId.HasValue) steamAppId = await LookupAppIdAsync(gameTitle);
+
             if (steamAppId.HasValue)
             {
                 NativeBridgeService.Log($"ID {steamAppId.Value} found. Linking...", "SYSTEM");
                 await NativeBridgeService.IntegrateGame(gameFolder, steamAppId.Value, gameTitle);
             }
+
             foreach (var userId in userIds)
             {
                 string configPath = Path.Combine(steamPath, "userdata", userId, "config");
                 string vdfPath = Path.Combine(configPath, "shortcuts.vdf");
                 string gridPath = Path.Combine(configPath, "grid");
+
                 var shortcuts = VdfUtility.ReadShortcuts(vdfPath);
                 var toRemove = shortcuts.Where(s => s.AppName.Equals(gameTitle, StringComparison.OrdinalIgnoreCase) || s.AppID == shortcutAppId).ToList();
                 foreach (var s in toRemove) shortcuts.Remove(s);
+
                 string workerName = gameTitle;
                 shortcuts.Add(new SteamShortcut {
                     AppID = shortcutAppId, AppName = workerName, Exe = cleanExe, StartDir = exeFolder, Icon = cleanExe, IsHidden = false, LaunchOptions = "--worker"
                 });
+
                 VdfUtility.WriteShortcuts(vdfPath, shortcuts);
+
                 if (steamAppId.HasValue)
                 {
                     ulong longId = CalculateLongId(shortcutAppId);
@@ -262,31 +302,38 @@ namespace SteamRipApp.Core
                     GlobalSettings.Save();
                     NativeBridgeService.Log($"Mapped AppID {steamAppId.Value} to Shortcut {longId}", "CONFIG");
                 }
+
                 if (steamAppId.HasValue) await DownloadAssetsAsync(steamAppId.Value, shortcutAppId, gridPath);
             }
+            
             NativeBridgeService.HideWorkerShortcuts();
             if (wasSteamOpen) RelaunchSteam(steamPath);
             NativeBridgeService.Log($"Completed: {gameTitle} is now integrated.", "SYSTEM");
             return true;
         }
+
         public static async Task<bool> RemoveGameFromSteam(string gameTitle, string exePath)
         {
             try {
                 var steamPath = GetSteamPath();
                 if (string.IsNullOrEmpty(steamPath)) return false;
+
                 bool wasSteamOpen = IsSteamRunning();
                 if (wasSteamOpen) 
                 {
-                    NativeBridgeService.Log("Steam is running. Restarting to remove shortcuts...", "SYSTEM");
-                    KillSteamProcess();
+                    NativeBridgeService.Log("Steam is running. Changes will be visible after manual update or Steam restart.", "SYSTEM");
+                    
                 }
+
                 var userIds = GetSteamUserIds(steamPath);
                 uint appid = CalculateAppId(exePath.Trim('\"'), gameTitle);
+
                 foreach (var userId in userIds)
                 {
                     string configPath = Path.Combine(steamPath, "userdata", userId, "config");
                     string vdfPath = Path.Combine(configPath, "shortcuts.vdf");
                     string gridPath = Path.Combine(configPath, "grid");
+
                     if (File.Exists(vdfPath))
                     {
                         var shortcuts = VdfUtility.ReadShortcuts(vdfPath);
@@ -294,6 +341,7 @@ namespace SteamRipApp.Core
                         foreach (var s in toRemove) shortcuts.Remove(s);
                         VdfUtility.WriteShortcuts(vdfPath, shortcuts);
                     }
+
                     if (Directory.Exists(gridPath))
                     {
                         string[] patterns = { $"{appid}p.jpg", $"{appid}_hero.jpg", $"{appid}_logo.png", $"{appid}.jpg" };
@@ -304,10 +352,9 @@ namespace SteamRipApp.Core
                         }
                     }
                 }
-                if (wasSteamOpen) RelaunchSteam(steamPath);
+                
                 return true;
             } catch { return false; }
         }
     }
 }
-

@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Data;
 using System;
+
 namespace SteamRipApp.Core
 {
     public class BooleanToVisibilityConverter : IValueConverter
@@ -10,11 +11,13 @@ namespace SteamRipApp.Core
             if (value is bool b) return b ? Visibility.Visible : Visibility.Collapsed;
             return Visibility.Collapsed;
         }
+
         public object ConvertBack(object value, Type targetType, object parameter, string language)
         {
             throw new NotImplementedException();
         }
     }
+
     public class InvertedBooleanToVisibilityConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
@@ -22,21 +25,26 @@ namespace SteamRipApp.Core
             if (value is bool b) return !b ? Visibility.Visible : Visibility.Collapsed;
             return Visibility.Visible;
         }
+
         public object ConvertBack(object value, Type targetType, object parameter, string language)
         {
             throw new NotImplementedException();
         }
     }
+
     public class SafeUriConverter : IValueConverter
     {
         private const string PlaceholderImage = "https://steamrip.com/wp-content/uploads/2021/06/Site-logo3.png";
+
         public object Convert(object value, Type targetType, object parameter, string language)
         {
             string? url = value as string;
+            
             if (string.IsNullOrWhiteSpace(url))
             {
                 return new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(PlaceholderImage));
             }
+
             try {
                 if (!url.StartsWith("http"))
                 {
@@ -54,6 +62,7 @@ namespace SteamRipApp.Core
                         return localBitmap;
                     }
                 }
+
                 Logger.Log($"[SafeUriConverter] Resolved Web URL: {url}");
                 return new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(url, UriKind.Absolute));
             } catch (Exception ex) {
@@ -61,11 +70,14 @@ namespace SteamRipApp.Core
                 return new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(PlaceholderImage));
             }
         }
+
         public object ConvertBack(object value, Type targetType, object parameter, string language)
         {
             throw new NotImplementedException();
         }
     }
+
+    
     public class PhaseToColorConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
@@ -83,16 +95,19 @@ namespace SteamRipApp.Core
         }
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
     }
+
     public class RunningToColorConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
         {
             if (value is bool isRunning && isRunning)
                 return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Red);
+            
             return Application.Current.Resources["AccentFillColorDefaultBrush"];
         }
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
     }
+
     public class RunningToStopWarningConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
@@ -104,4 +119,3 @@ namespace SteamRipApp.Core
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
     }
 }
-

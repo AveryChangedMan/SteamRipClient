@@ -7,16 +7,27 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="SteamRIP Engine v2.0">
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
+        
         <Grid x:Name="AppTitleBar" Background="Transparent" Height="48" VerticalAlignment="Top" Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            
             <StackPanel Orientation="Horizontal" Padding="12,0,0,0">
                 <TextBlock Text="SteamRIP Engine" VerticalAlignment="Center" Margin="12,0,0,0" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="Bold"/>
             </StackPanel>
         </Grid>
+
         <NavigationView x:Name="NavView" 
                         Grid.Row="1"
                         PaneDisplayMode="Left"
@@ -24,17 +35,50 @@
                         ItemInvoked="NavView_ItemInvoked">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Home" Icon="Home" Tag="home"/>
-                <NavigationViewItem Content="Steam (Unstable)" Icon="Globe" Tag="steam"/>
+                <NavigationViewItem x:Name="SteamNavItem" Content="Steam (Unstable)" Icon="Globe" Tag="steam"/>
                 <NavigationViewItem Content="Downloads" Icon="Download" Tag="downloads"/>
                 <NavigationViewItem Content="Library" Icon="Library" Tag="library"/>
-                <NavigationViewItem Content="Steam Integration" Icon="SetlockScreen" Tag="integration"/>
+                <NavigationViewItem x:Name="IntegrationNavItem" Content="Steam Integration" Icon="SetlockScreen" Tag="integration"/>
                 <NavigationViewItem Content="CleanUp" Icon="Refresh" Tag="cleanup"/>
                 <NavigationViewItem Content="Help" Icon="Help" Tag="help"/>
             </NavigationView.MenuItems>
+
+            <NavigationView.PaneFooter>
+                <StackPanel Orientation="Vertical">
+                    
+                    <StackPanel x:Name="HashingStatusArea" Orientation="Vertical" Padding="16,0,16,16" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Verification Active" FontSize="11" FontWeight="Bold" Opacity="0.6"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ProgressRing IsActive="True" Width="16" Height="16"/>
+                            <TextBlock x:Name="HashingStatusText" Text="Hashing..." FontSize="12" Opacity="0.8" TextWrapping="Wrap"/>
+                            <Button Click="StopHashing_Click" Background="Transparent" BorderThickness="0" Padding="4" VerticalAlignment="Center">
+                                <SymbolIcon Symbol="Stop"/>
+                            </Button>
+                        </StackPanel>
+                        <ProgressBar x:Name="HashingProgressBar" Minimum="0" Maximum="100" Height="4" IsIndeterminate="False"/>
+                    </StackPanel>
+
+                    
+                    <StackPanel x:Name="GlobalMoveStatus" Orientation="Vertical" Padding="16,0,16,16" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Process Active" FontSize="11" FontWeight="Bold" Opacity="0.6"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ProgressRing IsActive="True" Width="16" Height="16"/>
+                            <TextBlock x:Name="GlobalMoveText" Text="Moving Game..." FontSize="12" Opacity="0.8" TextWrapping="Wrap"/>
+                            <Button x:Name="GlobalCancelBtn" Click="GlobalCancelMove_Click" Background="Transparent" BorderThickness="0" Padding="4" VerticalAlignment="Center">
+                                <SymbolIcon Symbol="Stop"/>
+                            </Button>
+                        </StackPanel>
+                        <ProgressBar x:Name="GlobalProgressBar" Height="4" Minimum="0" Maximum="100" IsIndeterminate="False"/>
+                    </StackPanel>
+                </StackPanel>
+            </NavigationView.PaneFooter>
+
             <NavigationView.Content>
                 <Frame x:Name="ContentFrame" Padding="24" IsNavigationStackEnabled="True"/>
             </NavigationView.Content>
         </NavigationView>
+
+        
         <Border x:Name="ConfigOverlay" 
                 Visibility="Collapsed" 
                 Grid.RowSpan="2" 
@@ -44,15 +88,17 @@
                     <TextBlock x:Name="ConfigTitle" Text="Game Configuration" Style="{StaticResource TitleTextBlockStyle}"/>
                     <ScrollViewer MaxHeight="400">
                         <StackPanel x:Name="ConfigOptionsList" Spacing="8">
+                            
                         </StackPanel>
                     </ScrollViewer>
-                    <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,20,0,0">
-                        <Button Content="Save" Click="SaveConfig_Click" Style="{StaticResource AccentButtonStyle}" Width="100"/>
-                        <Button Content="Cancel" Click="CancelConfig_Click" Width="100"/>
+                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button x:Name="HardRepairBtn" Content="🛠 Hard Repair" Click="HardRepair_Click" Style="{StaticResource AccentButtonStyle}" Width="120"/>
+                        <Button Content="Save" Click="SaveConfig_Click" Style="{StaticResource AccentButtonStyle}" Width="80"/>
+                        <Button Content="Cancel" Click="CancelConfig_Click" Width="80"/>
                     </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
+        <WebView2 x:Name="RepairInterceptor" Visibility="Collapsed" Width="1" Height="1" Grid.RowSpan="2"/>
     </Grid>
 </Window>
-

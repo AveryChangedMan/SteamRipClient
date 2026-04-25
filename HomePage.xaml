@@ -8,15 +8,19 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     NavigationCacheMode="Required">
+
     <Page.Resources>
         <core:BooleanToVisibilityConverter x:Key="BoolToVis" />
         <core:InvertedBooleanToVisibilityConverter x:Key="InvertedBoolToVis" />
     </Page.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
+        
         <Grid Margin="0,0,0,16">
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <AutoSuggestBox x:Name="SearchBox"
@@ -25,12 +29,15 @@
                                 Width="400"
                                 QuerySubmitted="SearchBox_QuerySubmitted"/>
                 <Button Content="Search" Click="SearchBtn_Click" Style="{StaticResource AccentButtonStyle}"/>
+                
+                
                 <StackPanel x:Name="GlobalProgressPanel" Orientation="Horizontal" Spacing="12" Visibility="Collapsed" Margin="24,0,0,0">
                     <ProgressBar x:Name="GlobalProgressBar" Width="200" Height="20" VerticalAlignment="Center" Maximum="100"/>
                     <TextBlock x:Name="GlobalStatusText" Text="Preparing..." VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" Opacity="0.8"/>
                 </StackPanel>
             </StackPanel>
         </Grid>
+
         <GridView x:Name="ResultsGrid" Grid.Row="1" SelectionMode="None">
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="core:SearchResult">
@@ -39,6 +46,7 @@
                             <RowDefinition Height="254"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
+
                         <Border CornerRadius="8,8,0,0" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
                             <Image Stretch="UniformToFill">
                                 <Image.Source>
@@ -46,16 +54,21 @@
                                 </Image.Source>
                             </Image>
                         </Border>
+
                         <StackPanel Grid.Row="1" Padding="10" Spacing="4">
                             <TextBlock Text="{x:Bind Title}" FontWeight="Bold" FontSize="13"
                                        TextTrimming="CharacterEllipsis" MaxLines="2" TextWrapping="Wrap"/>
                             <TextBlock Text="{x:Bind DateString}" FontSize="11"
                                        Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}"/>
+
+                            
                             <Grid Margin="0,6,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
+
+                                
                                 <Grid Grid.Column="0">
                                     <Button FontSize="11" Padding="6,4" HorizontalAlignment="Stretch"
                                             Style="{StaticResource AccentButtonStyle}"
@@ -67,6 +80,8 @@
                                         </StackPanel>
                                     </Button>
                                 </Grid>
+
+                                
                                 <Button Grid.Column="1" Content="&#x2139;" FontSize="13" Padding="6,4" Margin="4,0,0,0"
                                         Click="Preview_Click"
                                         DataContext="{x:Bind}"
@@ -77,6 +92,8 @@
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+
+        
         <Grid x:Name="PropertiesOverlayDimmer" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="PropertiesDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}"
               Width="1100" Height="700" CornerRadius="8" Visibility="Collapsed" Grid.RowSpan="2"
@@ -86,32 +103,42 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
+
             <TextBlock Text="Game Properties" FontSize="20" FontWeight="Bold" Margin="24,20,24,0"/>
+
             <Grid Grid.Row="1" Margin="24,12,24,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="310"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
+
+                
                 <ScrollViewer Margin="0,0,8,0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
                     <StackPanel Spacing="10">
                         <TextBlock Text="&#x1F4CB; Game Info" FontWeight="SemiBold" FontSize="15"/>
                         <StackPanel x:Name="GameInfoList" Spacing="6"/>
+
                         <TextBlock Text="&#x2699; System Requirements" FontWeight="SemiBold" FontSize="15" Margin="0,12,0,0"/>
                         <StackPanel x:Name="RequirementsList" Spacing="6"/>
                         <ProgressRing x:Name="RequirementsLoading" IsActive="False" Width="24" Height="24" HorizontalAlignment="Left"/>
                     </StackPanel>
                 </ScrollViewer>
+
+                
                 <Border Grid.Column="1" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}"
                         BorderThickness="1" CornerRadius="4">
                     <WebView2 x:Name="LiveChatWebView" NavigationCompleted="LiveChatWebView_NavigationCompleted"/>
                 </Border>
             </Grid>
+
             <Button Grid.Row="2" Content="Close" Click="PropsCancelBtn_Click"
                     HorizontalAlignment="Right" Margin="24,12,24,16"/>
         </Grid>
+
+        
         <WebView2 x:Name="DownloadInterceptor" Visibility="Collapsed" Width="0" Height="0"/>
+
         <ProgressRing x:Name="LoadingRing" Grid.Row="1" Width="50" Height="50"
                       IsActive="False" VerticalAlignment="Center" HorizontalAlignment="Center"/>
     </Grid>
 </Page>
-

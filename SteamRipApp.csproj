@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -9,7 +10,12 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);SteamRipInjector\**</DefaultItemExcludes>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <WindowsPackageType>MSIX</WindowsPackageType>
+    <PublishUnpackaged Condition="'$(PublishUnpackaged)' == ''">true</PublishUnpackaged>
+    <WindowsPackageType Condition="'$(PublishUnpackaged)' == 'true'">None</WindowsPackageType>
+    <WindowsPackageType Condition="'$(PublishUnpackaged)' != 'true'">MSIX</WindowsPackageType>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>false</PublishSingleFile>
     <Platforms>x64;x86;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
     <PlatformTarget>x64</PlatformTarget>
@@ -17,15 +23,22 @@
     <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <AppxPackage>true</AppxPackage>
-    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxPackage Condition="'$(PublishUnpackaged)' == 'true'">false</AppxPackage>
+    <AppxPackage Condition="'$(PublishUnpackaged)' != 'true'">true</AppxPackage>
+    <GenerateAppxPackageOnBuild Condition="'$(PublishUnpackaged)' == 'true'">false</GenerateAppxPackageOnBuild>
+    <GenerateAppxPackageOnBuild Condition="'$(PublishUnpackaged)' != 'true'">true</GenerateAppxPackageOnBuild>
     <PackageCertificateThumbprint>8829DFD5386F422824A49A2CFCB78E1943E56A37</PackageCertificateThumbprint>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
+    <Version>1.1.2.0</Version>
   </PropertyGroup>
+
   <ItemGroup>
     <Content Include="Assets\**">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <None Include="Redist\NativeHash.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <Content Include="Redist\**">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
@@ -33,12 +46,16 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Crc32.NET" Version="1.2.0" />
     <PackageReference Include="Gameloop.Vdf" Version="0.6.2" />
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.240311000" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
+    <PackageReference Include="SharpCompress" Version="0.38.1" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.7" />
     <PackageReference Include="System.Management" Version="10.0.6" />
   </ItemGroup>
+
 </Project>

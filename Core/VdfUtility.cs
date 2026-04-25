@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+
 namespace SteamRipApp.Core
 {
     public class SteamShortcut
@@ -22,34 +23,44 @@ namespace SteamRipApp.Core
         public int LastPlayTime { get; set; }
         public List<string> Tags { get; set; } = new List<string>();
     }
+
     public static class VdfUtility
     {
         private const byte TYPE_MAP = 0x00;
         private const byte TYPE_STRING = 0x01;
         private const byte TYPE_INT = 0x02;
         private const byte TYPE_END = 0x08;
+
         public static List<SteamShortcut> ReadShortcuts(string filePath)
         {
             var shortcuts = new List<SteamShortcut>();
             if (!File.Exists(filePath)) return shortcuts;
+
             try {
                 using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read);
                 using var br = new BinaryReader(fs, Encoding.UTF8);
+
                 if (fs.Length < 10) return shortcuts;
+
+                
                 if (br.ReadByte() != TYPE_MAP) return shortcuts;
                 ReadNullTerminatedString(br); 
+
                 while (fs.Position < fs.Length - 1) 
                 {
                     byte type = br.ReadByte();
                     if (type == TYPE_END) break; 
+
                     if (type == TYPE_MAP)
                     {
                         ReadNullTerminatedString(br); 
                         var shortcut = new SteamShortcut();
+                        
                         while (true)
                         {
                             byte subType = br.ReadByte();
                             if (subType == TYPE_END) break;
+
                             string key = ReadNullTerminatedString(br);
                             if (subType == TYPE_STRING)
                             {
@@ -94,19 +105,25 @@ namespace SteamRipApp.Core
             }
             return shortcuts;
         }
+
         public static void WriteShortcuts(string filePath, List<SteamShortcut> shortcuts)
         {
             try {
                 using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
                 using var bw = new BinaryWriter(fs, Encoding.UTF8);
+
                 bw.Write(TYPE_MAP);
                 WriteNullTerminatedString(bw, "shortcuts");
+
                 for (int i = 0; i < shortcuts.Count; i++)
                 {
                     var s = shortcuts[i];
                     bw.Write(TYPE_MAP);
                     WriteNullTerminatedString(bw, i.ToString());
+
+                    
                     WriteIntProperty(bw, "appid", (int)s.AppID);
+
                     WriteStringProperty(bw, "AppName", s.AppName);
                     WriteStringProperty(bw, "exe", s.Exe);
                     WriteStringProperty(bw, "StartDir", s.StartDir);
@@ -120,6 +137,7 @@ namespace SteamRipApp.Core
                     WriteIntProperty(bw, "Devkit", s.Devkit ? 1 : 0);
                     WriteStringProperty(bw, "DevkitGameID", s.DevkitGameID);
                     WriteIntProperty(bw, "LastPlayTime", s.LastPlayTime);
+
                     bw.Write(TYPE_MAP);
                     WriteNullTerminatedString(bw, "tags");
                     for (int j = 0; j < s.Tags.Count; j++)
@@ -129,26 +147,31 @@ namespace SteamRipApp.Core
                         WriteNullTerminatedString(bw, s.Tags[j]);
                     }
                     bw.Write(TYPE_END); 
+
                     bw.Write(TYPE_END); 
                 }
+
                 bw.Write(TYPE_END); 
                 bw.Write(TYPE_END); 
             } catch (Exception ex) {
                 Logger.LogError("WriteVdf", ex);
             }
         }
+
         private static void WriteStringProperty(BinaryWriter bw, string key, string val)
         {
             bw.Write(TYPE_STRING);
             WriteNullTerminatedString(bw, key);
             WriteNullTerminatedString(bw, val);
         }
+
         private static void WriteIntProperty(BinaryWriter bw, string key, int val)
         {
             bw.Write(TYPE_INT);
             WriteNullTerminatedString(bw, key);
             bw.Write(val);
         }
+
         private static string ReadNullTerminatedString(BinaryReader br)
         {
             List<byte> bytes = new List<byte>();
@@ -159,6 +182,7 @@ namespace SteamRipApp.Core
             }
             return Encoding.UTF8.GetString(bytes.ToArray());
         }
+
         private static void WriteNullTerminatedString(BinaryWriter bw, string s)
         {
             if (string.IsNullOrEmpty(s))
@@ -172,18 +196,32 @@ namespace SteamRipApp.Core
                 bw.Write((byte)0x00);
             }
         }
+
+        
+        
+        
+        
         public static bool FlipIsHidden(string vdfPath, string targetAppName, bool hidden)
         {
             try {
                 byte[] vdfData = File.ReadAllBytes(vdfPath);
                 byte[] nameBytes = Encoding.UTF8.GetBytes(targetAppName);
                 byte[] hiddenKey = Encoding.UTF8.GetBytes("IsHidden");
+
+                
                 int namePos = FindBytePattern(vdfData, nameBytes);
                 if (namePos == -1) return false;
+
+                
                 int hiddenPos = FindBytePattern(vdfData, hiddenKey, namePos);
                 if (hiddenPos == -1) return false;
+
+                
+                
+                
                 int valueIndex = hiddenPos + hiddenKey.Length + 1;
                 if (valueIndex >= vdfData.Length) return false;
+
                 vdfData[valueIndex] = hidden ? (byte)0x01 : (byte)0x00;
                 File.WriteAllBytes(vdfPath, vdfData);
                 return true;
@@ -192,6 +230,7 @@ namespace SteamRipApp.Core
                 return false;
             }
         }
+
         private static int FindBytePattern(byte[] data, byte[] pattern, int startFrom = 0)
         {
             for (int i = startFrom; i <= data.Length - pattern.Length; i++)
@@ -207,4 +246,3 @@ namespace SteamRipApp.Core
         }
     }
 }
-

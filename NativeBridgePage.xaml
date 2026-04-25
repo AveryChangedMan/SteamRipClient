@@ -6,25 +6,33 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
     <Page.Resources>
         <SolidColorBrush x:Key="SteamPurple" Color="#733d91"/>
         <SolidColorBrush x:Key="DeepPurple" Color="#4b367c"/>
     </Page.Resources>
+
     <Grid>
+        
         <Grid.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                 <GradientStop Color="#1f2024" Offset="0"/>
                 <GradientStop Color="#17141f" Offset="1"/>
             </LinearGradientBrush>
         </Grid.Background>
+
         <ScrollViewer Padding="32">
             <StackPanel Spacing="32" MaxWidth="1000" HorizontalAlignment="Left">
+                
+                
                 <StackPanel Spacing="4">
                     <TextBlock Text="Steam Integration" FontSize="36" FontWeight="Bold" Foreground="{StaticResource SteamPurple}"/>
                     <TextBlock Text="BRIDGE SERVICE MANAGEMENT" FontSize="12" FontWeight="Bold" Opacity="0.5" CharacterSpacing="100"/>
                     <TextBlock Text="Manage and monitor the background service that connects your library to the Steam client interface." 
                                Style="{StaticResource BodyTextBlockStyle}" Opacity="0.8" Margin="0,8,0,0"/>
                 </StackPanel>
+
+                
                 <Border Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" 
                         CornerRadius="16" Padding="24" 
                         BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
@@ -33,22 +41,26 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+
                         <StackPanel Spacing="24">
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <FontIcon Glyph="&#xE961;" Foreground="{StaticResource SteamPurple}" FontSize="20"/>
                                 <TextBlock Text="Service Controller" FontWeight="Bold" FontSize="20"/>
                             </StackPanel>
+
                             <Grid ColumnSpacing="40">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
+
                                 <StackPanel VerticalAlignment="Center">
                                     <ToggleSwitch x:Name="ServiceToggle" Header="System Integration" 
                                                   Toggled="ServiceToggle_Toggled" 
                                                   OnContent="Active &amp; Ready" OffContent="Service Suspended"
                                                   FontSize="14" FontWeight="SemiBold"/>
                                 </StackPanel>
+
                                 <StackPanel Grid.Column="1" Spacing="8">
                                     <TextBlock Text="Target Steam Account" FontSize="12" FontWeight="Bold" Opacity="0.6"/>
                                     <ComboBox x:Name="UserSelector" Width="280" Height="40"
@@ -74,6 +86,7 @@
                                 </StackPanel>
                             </Grid>
                         </StackPanel>
+
                         <Button Grid.Column="1" Click="KillService_Click" 
                                 VerticalAlignment="Bottom" Height="40" Padding="20,0"
                                 CornerRadius="8" Background="Transparent" BorderBrush="#FF5555" BorderThickness="1">
@@ -84,6 +97,8 @@
                         </Button>
                     </Grid>
                 </Border>
+
+                
                 <Border Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" 
                         CornerRadius="16" Padding="24"
                         BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
@@ -93,6 +108,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="500"/>
                         </Grid.RowDefinitions>
+
                         <Grid>
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <FontIcon Glyph="&#xECAD;" Foreground="Gold" FontSize="20"/>
@@ -100,6 +116,8 @@
                             </StackPanel>
                             <TextBlock Text="CONSOLE LOG" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="10" FontWeight="Bold" Opacity="0.4" CharacterSpacing="50"/>
                         </Grid>
+
+                        
                         <Border Grid.Row="1" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" CornerRadius="12" Padding="16,8">
                             <ScrollViewer HorizontalScrollMode="Enabled" HorizontalScrollBarVisibility="Hidden" VerticalScrollMode="Disabled">
                                 <StackPanel Orientation="Horizontal" Spacing="20">
@@ -114,6 +132,8 @@
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>
+
+                        
                         <Border Grid.Row="2" Background="#11000000" CornerRadius="12" 
                                 BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
                             <ListView x:Name="LogList" Padding="16" SelectionMode="None">
@@ -134,8 +154,8 @@
                         </Border>
                     </Grid>
                 </Border>
+
             </StackPanel>
         </ScrollViewer>
     </Grid>
 </Page>
-

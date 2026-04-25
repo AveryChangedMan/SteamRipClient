@@ -7,20 +7,32 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
+
 namespace SteamRipApp.Core
 {
     public class RedistDetectionEngine
     {
         private Dictionary<string, string> _installedSoftware;
+
         public RedistDetectionEngine()
         {
+            
             _installedSoftware = GetAllInstalledSoftware();
         }
+
         #region Public API
+
+        
+        
+        
+        
+        
         public (bool IsInstalled, string Version) ValidateInstallation(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return (false, "Invalid Input");
             string lowerInput = input.ToLower();
+
+            
             if (lowerInput.EndsWith(".msi"))
             {
                 var msiInfo = GetMsiInfo(input);
@@ -32,23 +44,35 @@ namespace SteamRipApp.Core
                             return (true, entry.Value);
                     }
                 }
+                
+                
                 if (lowerInput.Contains("gfwl")) return CheckMsiGuid("{F350798C-D8D8-44A5-8022-834F941914CB}");
                 if (lowerInput.Contains("msxml4")) return CheckMsiGuid("{716E0306-8318-4364-8B35-29E385A92844}");
             }
+
+            
             if (lowerInput.Contains("dotnet") || lowerInput.Contains("ndp"))
             {
                 var dotNetResult = CheckDotNet(lowerInput);
                 if (dotNetResult.IsInstalled) return dotNetResult;
             }
+
+            
             var pathResult = CheckPathBasedComponents(lowerInput);
             if (pathResult.IsInstalled) return pathResult;
+
+            
             var vcResult = CheckVisualCpp(input);
             if (vcResult.IsInstalled) return vcResult;
+
+            
             if (lowerInput.Contains("aio"))
             {
                 if (_installedSoftware.Keys.Any(k => k.Contains("2015-2022") || k.Contains("VisualCppRedist AIO")))
                     return (true, "Verified via Components");
             }
+
+            
             string cleanName = Path.GetFileNameWithoutExtension(input).Replace("_", " ").Replace("-", " ").Replace("setup", "", StringComparison.OrdinalIgnoreCase).Trim();
             if (cleanName.Length > 3)
             {
@@ -58,15 +82,24 @@ namespace SteamRipApp.Core
                         return (true, entry.Value);
                 }
             }
+
             return (false, "Not Found");
         }
+
         #endregion
+
         #region Internal Audit Logic
+
+        
+        
+        
+        
         private (bool IsInstalled, string Version) CheckPathBasedComponents(string input)
         {
             string windir = Environment.GetEnvironmentVariable("windir") ?? @"C:\Windows";
             string pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
             string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+
             var paths = new Dictionary<string, string[]>
             {
                 { "oal", new[] { Path.Combine(windir, @"System32\OpenAL32.dll"), Path.Combine(windir, @"SysWOW64\OpenAL32.dll") } },
@@ -80,6 +113,7 @@ namespace SteamRipApp.Core
                 { "rockstar", new[] { Path.Combine(pf, @"Rockstar Games\Launcher\Launcher.exe") } },
                 { "uplay", new[] { Path.Combine(pf86, @"Ubisoft\Ubisoft Game Launcher\UbisoftConnect.exe") } }
             };
+
             foreach (var check in paths)
             {
                 if (input.Contains(check.Key))
@@ -90,21 +124,31 @@ namespace SteamRipApp.Core
                     }
                 }
             }
-            return (false, null);
+            return (false, "Not Found");
         }
+
+        
+        
+        
         private (bool IsInstalled, string Version) CheckVisualCpp(string input)
         {
             string lowerInput = input.ToLower();
             string arch = lowerInput.Contains("x64") ? "x64" : "x86";
-            string year = null;
+            string? year = null;
+
+            
             string ver = GetFileVersion(input);
             if (ver != null) year = VersionToYear(ver);
+
+            
             if (year == null)
             {
                 var match = Regex.Match(input, @"20\d{2}");
                 if (match.Success) year = match.Value;
             }
-            if (year == null && !lowerInput.Contains("vcredist") && !lowerInput.Contains("vc_redist")) return (false, null);
+
+            if (year == null && !lowerInput.Contains("vcredist") && !lowerInput.Contains("vc_redist")) return (false, "Not Found");
+
             foreach (var entry in _installedSoftware)
             {
                 string s = entry.Key.ToLower();
@@ -115,6 +159,8 @@ namespace SteamRipApp.Core
                     if (arch == "x86" && !is64) return (true, entry.Value);
                 }
             }
+
+            
             if (year != null && int.TryParse(year.Split('-')[0], out int y) && y >= 2015)
             {
                 foreach (var entry in _installedSoftware)
@@ -128,12 +174,15 @@ namespace SteamRipApp.Core
                     }
                 }
             }
-            return (false, null);
+
+            return (false, "Not Found");
         }
+
         private (bool IsInstalled, string Version) CheckDotNet(string input)
         {
             try
             {
+                
                 using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"))
                 {
                     if (key != null)
@@ -142,6 +191,7 @@ namespace SteamRipApp.Core
                         if (v != null && v.StartsWith("4.")) return (true, "v" + v + " (Built-in)");
                     }
                 }
+                
                 string dotnetPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"dotnet\shared\Microsoft.WindowsDesktop.App");
                 if (Directory.Exists(dotnetPath))
                 {
@@ -149,10 +199,13 @@ namespace SteamRipApp.Core
                     if (dirs.Any(d => Path.GetFileName(d).StartsWith("6.0"))) return (true, "v6.0 (Installed)");
                 }
             } catch { }
-            return (false, null);
+            return (false, "Not Found");
         }
+
         #endregion
+
         #region Utilities
+
         private Dictionary<string, string> GetAllInstalledSoftware()
         {
             var software = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -160,6 +213,7 @@ namespace SteamRipApp.Core
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
                 @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
             };
+
             foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
             {
                 foreach (var baseKey in keys)
@@ -175,7 +229,7 @@ namespace SteamRipApp.Core
                                     var name = sk?.GetValue("DisplayName")?.ToString();
                                     if (name != null)
                                     {
-                                        var ver = sk.GetValue("DisplayVersion")?.ToString() ?? "Unknown";
+                                        var ver = sk?.GetValue("DisplayVersion")?.ToString() ?? "Unknown";
                                         if (!software.ContainsKey(name)) software.Add(name, ver);
                                     }
                                 }
@@ -186,15 +240,17 @@ namespace SteamRipApp.Core
             }
             return software;
         }
+
         private string GetFileVersion(string path)
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path)) return string.Empty;
             try {
                 var info = FileVersionInfo.GetVersionInfo(path);
-                return info.ProductVersion;
-            } catch { return null; }
+                return info.ProductVersion ?? string.Empty;
+            } catch { return string.Empty; }
         }
-        private string VersionToYear(string ver)
+
+        private string? VersionToYear(string? ver)
         {
             if (string.IsNullOrEmpty(ver)) return null;
             string major = ver.Split('.')[0];
@@ -209,6 +265,7 @@ namespace SteamRipApp.Core
                 default: return null;
             }
         }
+
         private (bool IsInstalled, string Version) CheckMsiGuid(string guid)
         {
             foreach (var baseKey in new[] { @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" })
@@ -218,37 +275,47 @@ namespace SteamRipApp.Core
                     if (k != null) return (true, k.GetValue("DisplayVersion")?.ToString() ?? "Registered");
                 }
             }
-            return (false, null);
+            return (false, "Not Found");
         }
+
         #endregion
+
         #region MSI API (P/Invoke)
+
         [DllImport("msi.dll", CharSet = CharSet.Unicode)]
         private static extern uint MsiOpenDatabase(string szDatabasePath, IntPtr szPersist, out IntPtr phDatabase);
+
         [DllImport("msi.dll", CharSet = CharSet.Unicode)]
         private static extern uint MsiDatabaseOpenView(IntPtr hDatabase, string szQuery, out IntPtr phView);
+
         [DllImport("msi.dll")]
         private static extern uint MsiViewExecute(IntPtr hView, IntPtr hRecord);
+
         [DllImport("msi.dll")]
         private static extern uint MsiViewFetch(IntPtr hView, out IntPtr phRecord);
+
         [DllImport("msi.dll", CharSet = CharSet.Unicode)]
         private static extern uint MsiRecordGetString(IntPtr hRecord, uint iField, [Out] StringBuilder szValueBuf, ref uint pcchValueBuf);
+
         [DllImport("msi.dll")]
         private static extern uint MsiCloseHandle(IntPtr hAny);
+
         private (string Name, string Version) GetMsiInfo(string path)
         {
-            if (!File.Exists(path)) return (null, null);
+            if (!File.Exists(path)) return ("Unknown", "Unknown");
             IntPtr hDb = IntPtr.Zero;
             try {
-                if (MsiOpenDatabase(path, IntPtr.Zero, out hDb) != 0) return (null, null);
-                return (GetMsiProp(hDb, "ProductName"), GetMsiProp(hDb, "ProductVersion"));
+                if (MsiOpenDatabase(path, IntPtr.Zero, out hDb) != 0) return ("Unknown", "Unknown");
+                return (GetMsiProp(hDb, "ProductName") ?? "Unknown", GetMsiProp(hDb, "ProductVersion") ?? "Unknown");
             } finally { if (hDb != IntPtr.Zero) MsiCloseHandle(hDb); }
         }
+
         private string GetMsiProp(IntPtr hDb, string prop)
         {
             IntPtr hView = IntPtr.Zero;
             try {
                 string query = $"SELECT `Value` FROM `Property` WHERE `Property` = '{prop}'";
-                if (MsiDatabaseOpenView(hDb, query, out hView) != 0) return null;
+                if (MsiDatabaseOpenView(hDb, query, out hView) != 0) return string.Empty;
                 MsiViewExecute(hView, IntPtr.Zero);
                 IntPtr hRec = IntPtr.Zero;
                 if (MsiViewFetch(hView, out hRec) == 0)
@@ -260,9 +327,9 @@ namespace SteamRipApp.Core
                     return sb.ToString();
                 }
             } finally { if (hView != IntPtr.Zero) MsiCloseHandle(hView); }
-            return null;
+            return string.Empty;
         }
+
         #endregion
     }
 }
-

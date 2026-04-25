@@ -7,6 +7,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
+
     <Page.Resources>
         <core:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <core:InvertedBooleanToVisibilityConverter x:Key="InvertedBooleanToVisibilityConverter" />
@@ -14,23 +15,32 @@
         <core:RunningToColorConverter x:Key="RunningToColorConverter" />
         <core:RunningToStopWarningConverter x:Key="RunningToStopWarningConverter" />
     </Page.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <StackPanel Canvas.ZIndex="10" Orientation="Horizontal" Spacing="12" Margin="0,0,0,16">
+
+        <Grid Padding="24,12,24,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
             <Button x:Name="RefreshBtn" Click="RefreshBtn_Click" Style="{StaticResource AccentButtonStyle}">
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <SymbolIcon Symbol="Refresh"/>
                     <TextBlock Text="Refresh Library"/>
                 </StackPanel>
             </Button>
-            <TextBlock x:Name="StatusLabel" VerticalAlignment="Center" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}"/>
-        </StackPanel>
+            <TextBlock x:Name="StatusLabel" Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}"/>
+
+        </Grid>
+
         <GridView x:Name="GameGrid" 
-                  Grid.RowSpan="2" 
-                  Padding="0,60,0,0"
+                  Grid.Row="1" 
+                  Padding="24,12,24,24"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="GameGrid_ItemClick">
@@ -41,9 +51,13 @@
                             <RowDefinition Height="254"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
+                        
+                        
                         <Border Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" CornerRadius="8,8,0,0">
                             <Grid>
                                 <Image Stretch="UniformToFill" Source="{Binding LocalImagePath, Converter={StaticResource SafeUriConverter}}"/>
+                                
+                                
                                 <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4" 
                                         Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" BorderThickness="0"
                                         Click="FindImage_Click" Tag="{Binding RootPath}" ToolTipService.ToolTip="Find Cover Image">
@@ -51,42 +65,69 @@
                                 </Button>
                             </Grid>
                         </Border>
+
                         <StackPanel Grid.Row="1" Padding="10,10,10,10" Spacing="4">
                             <TextBlock Text="{Binding Title}" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
                             <StackPanel Orientation="Horizontal" Spacing="4">
-                                <Border Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" Padding="4,0" CornerRadius="2">
-                                    <TextBlock Text="{Binding Drive}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
-                                </Border>
-                                <TextBlock Text="{Binding Version}" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" VerticalAlignment="Center"/>
+                                <StackPanel Orientation="Horizontal" Spacing="4" Visibility="{Binding ShowMoveButton, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Border Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" Padding="4,0" CornerRadius="2">
+                                        <TextBlock Text="{Binding Drive}" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <HyperlinkButton Click="MoveInstall_Click" Tag="{Binding RootPath}" Padding="0" Margin="4,0,0,0">
+                                        <TextBlock Text="Move" FontSize="10" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                                    </HyperlinkButton>
+                                    <TextBlock Text="{Binding DisplayVersion}" FontSize="9" Opacity="0.7" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Text="📦 Moving..." FontSize="10" FontWeight="SemiBold" Foreground="Orange" Visibility="{Binding IsMoving, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             </StackPanel>
+
                             <Grid Margin="0,8,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
+                                
+                                <Button Content="ATTEMPT REPAIR" 
+                                        HorizontalAlignment="Stretch"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Background="Orange" Foreground="Black"
+                                        Click="RepairMove_Click" Tag="{Binding RootPath}"
+                                        Visibility="{Binding IsMoveInterrupted, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        FontSize="11"/>
+
                                 <Button Content="{Binding LaunchButtonText}" 
                                         Background="{Binding IsRunning, Converter={StaticResource RunningToColorConverter}}"
                                         HorizontalAlignment="Stretch"
                                         Style="{StaticResource AccentButtonStyle}"
                                         Click="Launch_Click" Tag="{Binding RootPath}"
-                                        Visibility="{Binding HasMissingRedists, Converter={StaticResource InvertedBooleanToVisibilityConverter}}"
+                                        Visibility="{Binding ShowLaunchButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                                         FontSize="11"
                                         ToolTipService.ToolTip="{Binding IsRunning, Converter={StaticResource RunningToStopWarningConverter}}"/>
+
                                 <Button Content="INSTALL REDIST" HorizontalAlignment="Stretch"
                                         Style="{StaticResource AccentButtonStyle}"
                                         Background="#993333" Foreground="White"
                                         Click="InstallRedist_Click" Tag="{Binding RootPath}"
                                         Visibility="{Binding HasMissingRedists, Converter={StaticResource BooleanToVisibilityConverter}}"
                                         FontSize="10"/>
-                                <Button Grid.Column="1" Margin="4,0,0,0" Content="⚙" FontSize="13" Padding="6,4"
+
+                                <Button Grid.Column="1" Margin="4,0,0,0" Content="📦" FontSize="13" Padding="6,4"
+                                        Click="Backup_Click" Tag="{Binding RootPath}"
+                                        Visibility="{Binding ShowBackupButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ToolTipService.ToolTip="Create Integrity Backup (Hash)"/>
+                                <Button Grid.Column="2" Margin="4,0,0,0" Content="⚙" FontSize="13" Padding="6,4"
                                         Click="Properties_Click" Tag="{Binding RootPath}"
+                                        Visibility="{Binding IsMoving, Converter={StaticResource InvertedBooleanToVisibilityConverter}}"
                                         ToolTipService.ToolTip="Properties"/>
-                                <Button Grid.Column="2" Margin="4,0,0,0" Content="🗑" FontSize="13" Padding="6,4"
+                                <Button Grid.Column="3" Margin="4,0,0,0" Content="🗑" FontSize="13" Padding="6,4"
                                         Click="Uninstall_Click" Tag="{Binding RootPath}"
+                                        Visibility="{Binding IsMoving, Converter={StaticResource InvertedBooleanToVisibilityConverter}}"
                                         ToolTipService.ToolTip="Uninstall game"/>
                             </Grid>
                         </StackPanel>
+                        
                         <Border Visibility="{Binding IsRedistMissing, Converter={StaticResource BooleanToVisibilityConverter}}" 
                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="4,2" Background="DarkRed" CornerRadius="4">
                             <TextBlock Text="⚠️ REDIST MISSING" FontSize="10" Foreground="White" FontWeight="Bold"/>
@@ -95,6 +136,8 @@
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+        
+        
         <Grid x:Name="RedistOverlay" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="RedistPanel" Background="{ThemeResource SystemControlBackgroundAltHighBrush}" 
               Width="450" MaxHeight="600" CornerRadius="12" Padding="24" Visibility="Collapsed" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -103,10 +146,12 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
+            
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,16">
                 <SymbolIcon Symbol="Setting" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
                 <TextBlock Text="Missing Requirements" FontSize="20" FontWeight="Bold"/>
             </StackPanel>
+            
             <ListView x:Name="RedistMissingList" Grid.Row="1" SelectionMode="None">
                 <ListView.ItemTemplate>
                     <DataTemplate>
@@ -124,10 +169,13 @@
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
+            
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,16,0,0">
                 <Button Content="Close" Click="RedistPanelClose_Click"/>
             </StackPanel>
         </Grid>
+        
+        
         <Grid x:Name="ImageSearchOverlay" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="ImageSearchDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}" 
               Width="450" Height="500" CornerRadius="8" Padding="24" Visibility="Collapsed" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -136,10 +184,13 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
+            
             <TextBlock Text="Find Game Cover" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+            
             <StackPanel Grid.Row="1" Spacing="12">
                 <AutoSuggestBox x:Name="DialogSearchBox" PlaceholderText="Search SteamRIP for covers..."
                                 QuerySubmitted="DialogSearchBox_QuerySubmitted"/>
+                
                 <ListView x:Name="DialogResultsList" Height="300" SelectionMode="Single"
                           SelectionChanged="DialogResultsList_SelectionChanged">
                     <ListView.ItemTemplate>
@@ -153,11 +204,14 @@
                 </ListView>
                 <ProgressRing x:Name="DialogLoadingRing" IsActive="False"/>
             </StackPanel>
+            
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,16,0,0">
                 <Button x:Name="DialogCancelBtn" Content="Cancel" Click="DialogCancelBtn_Click"/>
                 <Button x:Name="DialogSetCoverBtn" Content="Set as Cover" Style="{StaticResource AccentButtonStyle}" IsEnabled="False" Click="DialogSetCoverBtn_Click"/>
             </StackPanel>
         </Grid>
+
+        
         <Grid x:Name="LinkSearchOverlay" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="LinkSearchDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}" 
               Width="500" Height="500" CornerRadius="8" Padding="24" Visibility="Collapsed" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -166,10 +220,13 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
+            
             <TextBlock Text="🔗 Link SteamRIP Page" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+            
             <StackPanel Grid.Row="1" Spacing="12">
                 <AutoSuggestBox x:Name="LinkSearchBox" PlaceholderText="Search for the correct game page..."
                                 QuerySubmitted="LinkSearchBox_QuerySubmitted"/>
+                
                 <ListView x:Name="LinkResultsList" Height="300" SelectionMode="Single"
                           SelectionChanged="LinkResultsList_SelectionChanged">
                     <ListView.ItemTemplate>
@@ -186,11 +243,14 @@
                 </ListView>
                 <ProgressRing x:Name="LinkLoadingRing" IsActive="False"/>
             </StackPanel>
+            
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,16,0,0">
                 <Button Content="Cancel" Click="LinkCancelBtn_Click"/>
                 <Button x:Name="LinkConfirmBtn" Content="Link This Page" Style="{StaticResource AccentButtonStyle}" IsEnabled="False" Click="LinkConfirmBtn_Click"/>
             </StackPanel>
         </Grid>
+
+        
         <Grid x:Name="PropertiesOverlayDimmer" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="PropertiesDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}"
               Width="1100" Height="700" CornerRadius="8" Visibility="Collapsed" Grid.RowSpan="2"
@@ -200,31 +260,41 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
+
             <TextBlock x:Name="PropsTitle" Text="Game Properties" FontSize="20" FontWeight="Bold" Margin="24,20,24,0"/>
+
             <Grid Grid.Row="1" Margin="24,12,24,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="310"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
+
+                
                 <ScrollViewer Margin="0,0,8,0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
                     <StackPanel Spacing="10">
                         <TextBlock Text="📋 Game Info" FontWeight="SemiBold" FontSize="15"/>
                         <StackPanel x:Name="GameInfoList" Spacing="6"/>
+
                         <Button Content="🔗 Link Different Page" Click="ManualLinkBtn_Click"
                                 HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+
                         <TextBlock Text="⚙️ System Requirements" FontWeight="SemiBold" FontSize="15" Margin="0,12,0,0"/>
                         <StackPanel x:Name="RequirementsList" Spacing="6"/>
                         <ProgressRing x:Name="RequirementsLoading" IsActive="False" Width="24" Height="24" HorizontalAlignment="Left"/>
                     </StackPanel>
                 </ScrollViewer>
+
+                
                 <Border Grid.Column="1" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1" CornerRadius="4">
                     <WebView2 x:Name="LiveChatWebView" NavigationCompleted="LiveChatWebView_NavigationCompleted"/>
                 </Border>
             </Grid>
+
             <Button Grid.Row="2" Content="Close" Click="PropsCancelBtn_Click"
                     HorizontalAlignment="Right" Margin="24,12,24,16"/>
         </Grid>
+
         <ProgressRing x:Name="LoadingRing" Grid.Row="1" Width="50" Height="50" IsActive="False" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+
     </Grid>
 </Page>
-

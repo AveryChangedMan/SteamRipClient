@@ -6,13 +6,16 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
+
     <Grid Padding="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
         <TextBlock Text="Help &amp; Documentation" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16"/>
+
         <AutoSuggestBox x:Name="HelpSearchBox" 
                         Grid.Row="1"
                         PlaceholderText="Search help topics..." 
@@ -21,6 +24,7 @@
                         Margin="0,0,0,24"
                         Width="400"
                         HorizontalAlignment="Left"/>
+
         <ListView x:Name="HelpList" Grid.Row="2" SelectionMode="None">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="local:HelpItem">
@@ -37,6 +41,7 @@
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
+
         <TextBlock x:Name="NoResultsText" 
                    Grid.Row="2" 
                    Text="No topics match your search." 
@@ -46,4 +51,3 @@
                    Opacity="0.6"/>
     </Grid>
 </Page>
-

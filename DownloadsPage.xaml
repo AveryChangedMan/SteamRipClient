@@ -7,17 +7,22 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
+
     <Page.Resources>
         <core:BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <core:InvertedBooleanToVisibilityConverter x:Key="InvertedBoolToVis" />
         <core:PhaseToColorConverter x:Key="PhaseToColorConverter" />
         <core:SafeUriConverter x:Key="SafeUriConverter" />
     </Page.Resources>
+
     <Grid Padding="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
         <TextBlock Text="&#x1F4E5; Active Downloads" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,20"/>
+
         <ListView x:Name="DownloadsList" Grid.Row="1" SelectionMode="None">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -36,25 +41,41 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+
+                        
                         <Border CornerRadius="4" Width="64" Height="40" Margin="0,0,12,0" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
                             <Image Source="{x:Bind ImageUrl, Mode=OneWay, Converter={StaticResource SafeUriConverter}}" Stretch="UniformToFill"/>
                         </Border>
+
+                        
                         <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Text="{x:Bind Title, Mode=OneWay}" FontWeight="SemiBold" FontSize="14"/>
+                                
                                 <Border CornerRadius="4" Padding="6,2"
                                         Background="{x:Bind Phase, Mode=OneWay, Converter={StaticResource PhaseToColorConverter}}">
                                     <TextBlock Text="{x:Bind Phase, Mode=OneWay}" FontSize="10" FontWeight="SemiBold"
                                                Foreground="White"/>
                                 </Border>
-                                <Border CornerRadius="4" Padding="6,2" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderBrush="{ThemeResource SystemControlBackgroundBaseMediumBrush}" BorderThickness="1">
-                                    <TextBlock Text="{x:Bind Source, Mode=OneWay}" FontSize="9" FontWeight="Bold" Opacity="0.7"/>
-                                </Border>
+                                
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Border CornerRadius="4" Padding="6,2" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderBrush="{ThemeResource SystemControlBackgroundBaseMediumBrush}" BorderThickness="1">
+                                        <TextBlock Text="{x:Bind Source, Mode=OneWay}" FontSize="9" FontWeight="Bold" Opacity="0.7" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <Button Padding="4,2" Click="CopyLink_Click" Tag="{x:Bind SourceUrl, Mode=OneWay}" Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="Copy Download Link">
+                                        <SymbolIcon Symbol="Copy"/>
+                                    </Button>
+                                    <TextBox Text="{x:Bind SourceUrl, Mode=OneWay}" IsReadOnly="True" FontSize="9" Padding="4,1" MinWidth="100" MaxWidth="150" VerticalAlignment="Center" Background="Transparent" BorderThickness="0,0,0,1" Opacity="0.6"/>
+                                </StackPanel>
                             </StackPanel>
+
+                            
                             <ProgressBar x:Name="MainProgressBar"
                                          Value="{x:Bind Percentage, Mode=OneWay}"
                                          Minimum="0" Maximum="100"
-                                         Height="6" CornerRadius="3"/>
+                                         Height="6" CornerRadius="3"
+                                         Visibility="{x:Bind ShowLoadingBar, Mode=OneWay, Converter={StaticResource BoolToVis}}"/>
+
                             <StackPanel Orientation="Horizontal" Spacing="12">
                                 <TextBlock FontSize="12" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}">
                                     <Binding Path="Percentage" Mode="OneWay" /> <Run Text="%"/>
@@ -64,18 +85,37 @@
                                            TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
                             </StackPanel>
                         </StackPanel>
+
+                        
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="4">
-                            <Button x:Name="PauseBtn"
-                                    Width="36" Height="36" Padding="0" BorderThickness="0"
-                                    ToolTipService.ToolTip="Pause / Resume"
-                                    Click="PauseResume_Click"
-                                    Tag="{x:Bind DestPath, Mode=OneWay}">
-                                <SymbolIcon x:Name="PauseIcon" Symbol="Pause"/>
-                            </Button>
-                            <Button Width="36" Height="36" Padding="0" BorderThickness="0"
-                                    ToolTipService.ToolTip="Cancel and delete"
-                                    Click="Cancel_Click"
-                                    Tag="{x:Bind DestPath, Mode=OneWay}">
+                            
+                            <StackPanel Orientation="Horizontal" Spacing="4" Visibility="{x:Bind ShowControlButtons, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                <Button x:Name="PauseBtn" Width="36" Height="36" Padding="0" BorderThickness="0" ToolTipService.ToolTip="Pause / Resume" Click="PauseResume_Click" Tag="{x:Bind DestPath, Mode=OneWay}">
+                                    <SymbolIcon x:Name="PauseIcon" Symbol="Pause"/>
+                                </Button>
+                                <Button Width="36" Height="36" Padding="0" BorderThickness="0" ToolTipService.ToolTip="Cancel and delete" Click="Cancel_Click" Tag="{x:Bind DestPath, Mode=OneWay}">
+                                    <SymbolIcon Symbol="Delete"/>
+                                </Button>
+                            </StackPanel>
+
+                            
+                            <Button Content="Library" 
+                                    Click="GoToLibrary_Click" 
+                                    Tag="{x:Bind Title, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Visibility="{x:Bind ShowLibraryButton, Mode=OneWay, Converter={StaticResource BoolToVis}}"/>
+
+                            <Button Content="Download Again" 
+                                    Click="DownloadAgain_Click" 
+                                    Tag="{x:Bind PageUrl, Mode=OneWay}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Visibility="{x:Bind ShowDownloadAgainButton, Mode=OneWay, Converter={StaticResource BoolToVis}}"/>
+
+                            
+                            <Button Width="36" Height="36" Padding="0" BorderThickness="0" 
+                                    ToolTipService.ToolTip="Remove from history" 
+                                    Click="RemoveHistory_Click" Tag="{x:Bind Title, Mode=OneWay}"
+                                    Visibility="{x:Bind ShowControlButtons, Mode=OneWay, Converter={StaticResource InvertedBoolToVis}}">
                                 <SymbolIcon Symbol="Delete"/>
                             </Button>
                         </StackPanel>
@@ -83,6 +123,7 @@
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>
+
         <StackPanel x:Name="EmptyLabel" Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="12" Visibility="Collapsed">
             <SymbolIcon Symbol="Download"/>
@@ -90,4 +131,3 @@
         </StackPanel>
     </Grid>
 </Page>
-

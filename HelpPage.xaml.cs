@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+
 namespace SteamRipApp
 {
     public class HelpItem
@@ -12,10 +13,12 @@ namespace SteamRipApp
         public string Category { get; set; } = "";
         public string Keywords { get; set; } = "";
     }
+
     public sealed partial class HelpPage : Page
     {
         private List<HelpItem> _allHelpItems = new List<HelpItem>();
         private ObservableCollection<HelpItem> _filteredItems = new ObservableCollection<HelpItem>();
+
         public HelpPage()
         {
             this.InitializeComponent();
@@ -23,10 +26,12 @@ namespace SteamRipApp
             HelpList.ItemsSource = _filteredItems;
             FilterItems("");
         }
+
         private void LoadHelpItems()
         {
             _allHelpItems = new List<HelpItem>
             {
+                
                 new HelpItem {
                     Category = "TROUBLESHOOTING",
                     Question = "What if the game doesn't open, or opens and immediately closes?",
@@ -63,6 +68,8 @@ namespace SteamRipApp
                     Answer = "The Steam tab uses a web-scraping method to show the Steam Store. Because Steam frequently changes its website layout, this tab might occasionally break or show formatting errors. The 'Library' and 'Downloads' tabs are much more stable.",
                     Keywords = "steam unstable why broken"
                 },
+
+                
                 new HelpItem {
                     Category = "GOLDBERG PATCH",
                     Question = "What is the Goldberg Patch?",
@@ -93,6 +100,8 @@ namespace SteamRipApp
                     Answer = "Standard Goldberg is for offline use. While it supports LAN play in some games, it generally does not provide access to official Steam matchmaking or servers.",
                     Keywords = "multiplayer goldberg lan matchmaking servers"
                 },
+
+                
                 new HelpItem {
                     Category = "STEAM INTEGRATION",
                     Question = "What is 'Steam Integration'?",
@@ -123,6 +132,8 @@ namespace SteamRipApp
                     Answer = "Steam only reads its shortcut configuration file during startup. To ensure your new game appears in your library immediately, the app must restart Steam to reload the config.",
                     Keywords = "restart steam reload library config"
                 },
+
+                
                 new HelpItem {
                     Category = "DOWNLOADS",
                     Question = "Why is my download speed slow?",
@@ -153,6 +164,8 @@ namespace SteamRipApp
                     Answer = "Temporary chunks are stored in your AppData/Local/SteamRipApp folder. Once complete, they are moved to your specified 'Library' folder.",
                     Keywords = "storage folder path where"
                 },
+
+                
                 new HelpItem {
                     Category = "PERFORMANCE",
                     Question = "What is 'CPU Priority'?",
@@ -183,6 +196,8 @@ namespace SteamRipApp
                     Answer = "Yes, especially for games that save data in their own folder. Without Admin rights, Windows might block the game from saving your progress.",
                     Keywords = "admin administrator permissions save data"
                 },
+
+                
                 new HelpItem {
                     Category = "REDISTS",
                     Question = "What are 'Redistributables'?",
@@ -213,6 +228,8 @@ namespace SteamRipApp
                     Answer = "The app identifies what you need and can launch the installers for you, but Windows requires you to click 'Yes' on the UAC prompt for each one.",
                     Keywords = "automatic install uac"
                 },
+
+                
                 new HelpItem {
                     Category = "LIBRARY",
                     Question = "How do I add an existing game to the Library?",
@@ -261,6 +278,8 @@ namespace SteamRipApp
                     Answer = "Currently, the app supports searching the Steam database for covers. Custom local image support is planned for a future update. For now, use the Magnifying Glass to find the best official match.",
                     Keywords = "custom cover image art change"
                 },
+
+                
                 new HelpItem {
                     Category = "CLEANUP",
                     Question = "What is 'CleanUp'?",
@@ -291,6 +310,8 @@ namespace SteamRipApp
                     Answer = "Antivirus software often flags DLL emulators as 'GameHack' or 'PUP' (Potentially Unwanted Program) because they modify how a program behaves. It is a false positive.",
                     Keywords = "antivirus virus false positive gamehack pup"
                 },
+
+                
                 new HelpItem {
                     Category = "TROUBLESHOOTING",
                     Question = "The app says 'Steam Debugging Disabled'?",
@@ -323,10 +344,12 @@ namespace SteamRipApp
                 }
             };
         }
+
         private void HelpSearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
         {
             FilterItems(sender.Text);
         }
+
         private void FilterItems(string query)
         {
             _filteredItems.Clear();
@@ -336,9 +359,9 @@ namespace SteamRipApp
                 i.Keywords.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 i.Category.Contains(query, StringComparison.OrdinalIgnoreCase)
             ).ToList();
+
             foreach (var item in results) _filteredItems.Add(item);
             NoResultsText.Visibility = _filteredItems.Count == 0 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
         }
     }
 }
-
