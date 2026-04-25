@@ -581,15 +581,15 @@ namespace SteamRipApp
 
             var result = await sender.ExecuteScriptAsync(@"
                 (function() {
-                    
+                    // Buzzheavier: hx-get download anchor
                     var btn = document.querySelector('a.link-button[hx-get*=""download""]');
                     if (btn) { btn.click(); return 'clicked-buzzheavier'; }
 
-                    
+                    // GoFile: download button
                     var gfBtn = document.querySelector('button[id*=""download""], .downloadButton, button[class*=""download""]');
                     if (gfBtn) { gfBtn.click(); return 'clicked-gofile'; }
 
-                    
+                    // Generic fallback
                     var all = document.querySelectorAll('a, button');
                     for (var i = 0; i < all.length; i++) {
                         if (all[i].textContent.trim().toLowerCase() === 'download') {

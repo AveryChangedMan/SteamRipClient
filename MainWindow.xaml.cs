@@ -789,15 +789,15 @@ namespace SteamRipApp
                         await Task.Delay(2000);
                         var result = await s.ExecuteScriptAsync(@"
                             (function() {
-                                
+                                // Buzzheavier / HTMX
                                 var bzBtn = document.querySelector('a[hx-get*=""download""], .link-button, button[hx-get*=""download""]');
                                 if (bzBtn) { bzBtn.click(); return 'clicked-buzzheavier'; }
 
-                                
+                                // GoFile / Generic
                                 var gfBtn = document.querySelector('button[id*=""download""], .downloadButton, button[class*=""download""], #downloadButton');
                                 if (gfBtn) { gfBtn.click(); return 'clicked-gofile'; }
                                 
-                                
+                                // Fallback any anchor with ""download""
                                 var anyDl = document.querySelector('a[href*=""/download/""], a[href*=""download""]');
                                 if (anyDl) { anyDl.click(); return 'clicked-fallback'; }
                                 
@@ -811,7 +811,7 @@ namespace SteamRipApp
                 }
 
                 string absoluteUrl = targetUrl;
-                if (absoluteUrl.StartsWith("
+                if (absoluteUrl.StartsWith("//")) absoluteUrl = "https:" + absoluteUrl;
                 if (!absoluteUrl.StartsWith("http")) absoluteUrl = "https://" + absoluteUrl.TrimStart('/');
                 
                 RepairInterceptor.Source = new Uri(absoluteUrl);

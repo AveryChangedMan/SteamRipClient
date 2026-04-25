@@ -87,12 +87,12 @@ namespace SteamRipApp.Core
                 doc.LoadHtml(html);
 
                 
-                var infoList = doc.DocumentNode.SelectNodes("
+                var infoList = doc.DocumentNode.SelectNodes("//div[contains(@class, 'tie-list-shortcode')]//ul/li");
                 if (infoList != null)
                 {
                     foreach (var li in infoList)
                     {
-                        var strong = li.SelectSingleNode(".
+                        var strong = li.SelectSingleNode(".//strong");
                         if (strong != null)
                         {
                             var key = strong.InnerText.Replace(":", "").Trim();
@@ -125,18 +125,18 @@ namespace SteamRipApp.Core
                 
                 if (details.LatestVersion == "Unknown")
                 {
-                    var tagMeta = doc.DocumentNode.SelectNodes("
+                    var tagMeta = doc.DocumentNode.SelectNodes("//span[contains(@class, 'tagmetafield')]");
                     if (tagMeta != null && tagMeta.Count > 0)
                         details.LatestVersion = tagMeta[0].InnerText.Trim();
                 }
 
                 
-                var reqList = doc.DocumentNode.SelectNodes("
+                var reqList = doc.DocumentNode.SelectNodes("//div[contains(@class, 'checklist')]//ul/li");
                 if (reqList != null)
                 {
                     foreach (var li in reqList)
                     {
-                        var strong = li.SelectSingleNode(".
+                        var strong = li.SelectSingleNode(".//strong");
                         if (strong != null)
                         {
                             var key = strong.InnerText.Replace(":", "").Trim();
@@ -172,11 +172,11 @@ namespace SteamRipApp.Core
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
 
-                var postNodes = doc.DocumentNode.SelectNodes("
+                var postNodes = doc.DocumentNode.SelectNodes("//div[contains(@class, 'post-item')] | //article[contains(@class, 'post-obj')] | //div[contains(@class, 'post-element')] | //h2[contains(@class, 'title')] | //article");
                 IEnumerable<HtmlNode> posts = postNodes?.AsEnumerable() ?? Enumerable.Empty<HtmlNode>();
                 
                 if (postNodes == null) {
-                    posts = doc.DocumentNode.SelectNodes("
+                    posts = doc.DocumentNode.SelectNodes("//h2/a")?.Select(a => a.ParentNode) ?? Enumerable.Empty<HtmlNode>();
                 }
 
                 if (posts != null)
@@ -186,17 +186,17 @@ namespace SteamRipApp.Core
 
                     foreach (var post in posts)
                     {
-                        var titleNode = post.Name == "a" ? post : post.SelectSingleNode(".
-                        var imgNode = post.SelectSingleNode(".
-                        var slideNode = post.SelectSingleNode(".
-                        var dateNode = post.SelectSingleNode(".
+                        var titleNode = post.Name == "a" ? post : post.SelectSingleNode(".//h2/a | .//a[contains(@class, 'all-over-thumb-link')] | .//a[1]");
+                        var imgNode = post.SelectSingleNode(".//img");
+                        var slideNode = post.SelectSingleNode(".//div[contains(@class, 'slide')]");
+                        var dateNode = post.SelectSingleNode(".//time | .//span[contains(@class, 'date')]");
 
                         if (titleNode != null)
                         {
                             var title = titleNode.InnerText.Trim();
                             if (string.IsNullOrEmpty(title)) 
                             {
-                                var h2Title = post.SelectSingleNode(".
+                                var h2Title = post.SelectSingleNode(".//h2[contains(@class, 'the-post-title')] | .//h2[contains(@class, 'thumb-title')]");
                                 if (h2Title != null) title = h2Title.InnerText.Trim();
                             }
                             
@@ -249,12 +249,12 @@ namespace SteamRipApp.Core
                 doc.LoadHtml(html);
 
                 
-                var buzzLink = doc.DocumentNode.SelectNodes("
+                var buzzLink = doc.DocumentNode.SelectNodes("//a[contains(@href, 'bzzhr.to') or contains(@href, 'buzzheavier') or contains(text(), 'Buzzheavier')]")?.FirstOrDefault();
                 
                 
                 if (buzzLink == null)
                 {
-                    var allAnchors = doc.DocumentNode.SelectNodes("
+                    var allAnchors = doc.DocumentNode.SelectNodes("//a[@href]");
                     if (allAnchors != null)
                     {
                         foreach (var a in allAnchors)
@@ -272,7 +272,7 @@ namespace SteamRipApp.Core
                 if (buzzLink != null)
                 {
                     var href = buzzLink.GetAttributeValue("href", "");
-                    if (href.StartsWith("
+                    if (href.StartsWith("//")) href = "https:" + href;
                     Logger.Log($"[Scraper] Buzzheavier link found: {href}");
                     return (true, href);
                 }
@@ -330,8 +330,8 @@ namespace SteamRipApp.Core
                     doc.LoadHtml(html);
                     
                     
-                    var dlBtn = doc.DocumentNode.SelectNodes("
-                             ?? doc.DocumentNode.SelectNodes("
+                    var dlBtn = doc.DocumentNode.SelectNodes("//a[contains(@hx-get, 'download') or contains(@class, 'link-button') or contains(@class, 'download')]")?.FirstOrDefault()
+                             ?? doc.DocumentNode.SelectNodes("//button[contains(@hx-get, 'download')]")?.FirstOrDefault();
 
                     if (dlBtn != null)
                     {
@@ -339,7 +339,7 @@ namespace SteamRipApp.Core
                         if (string.IsNullOrEmpty(href)) href = dlBtn.GetAttributeValue("href", "");
 
                         if (!string.IsNullOrEmpty(href)) {
-                            if (href.StartsWith("
+                            if (href.StartsWith("//")) href = "https:" + href;
                             if (href.StartsWith("/")) href = "https://buzzheavier.com" + href;
                             Logger.Log($"[Scraper] Found fallback direct URL via HTML: {href}");
                             return href;
@@ -402,7 +402,7 @@ namespace SteamRipApp.Core
                 var doc = new HtmlDocument();
                 doc.LoadHtml(html);
 
-                var anchors = doc.DocumentNode.SelectNodes("
+                var anchors = doc.DocumentNode.SelectNodes("//a[@href]");
                 if (anchors != null)
                 {
                     foreach (var a in anchors)
@@ -410,12 +410,12 @@ namespace SteamRipApp.Core
                         var href = a.GetAttributeValue("href", "");
                         if (href.Contains("bzzhr.to") || href.Contains("buzzheavier"))
                         {
-                            if (href.StartsWith("
+                            if (href.StartsWith("//")) href = "https:" + href;
                             hosts.Add(new DownloadHost { Name = "Buzzheavier", Link = href });
                         }
                         else if (href.Contains("gofile.io"))
                         {
-                            if (href.StartsWith("
+                            if (href.StartsWith("//")) href = "https:" + href;
                             hosts.Add(new DownloadHost { Name = "GoFile", Link = href });
                         }
                     }

@@ -27,7 +27,7 @@ static inline uint64_t XXH64_mergeRound(uint64_t acc, uint64_t val) {
     return acc;
 }
 
-// Full XXH64 state
+
 struct XXH64_State {
     uint64_t v1, v2, v3, v4;
     uint64_t totalLen;
@@ -90,7 +90,7 @@ static uint64_t XXH64_Digest(const XXH64_State* state) {
         h64 = XXH64_mergeRound(h64, state->v3);
         h64 = XXH64_mergeRound(h64, state->v4);
     } else {
-        h64 = state->v3 + XXH_PRIME64_5; // Simplified v3 = seed
+        h64 = state->v3 + XXH_PRIME64_5; 
     }
 
     h64 += state->totalLen;
@@ -134,7 +134,7 @@ extern "C" {
         XXH64_State state;
         XXH64_Reset(&state, 0);
 
-        const size_t bufferSize = 1024 * 1024; // 1MB
+        const size_t bufferSize = 1024 * 1024; 
         uint8_t* buffer = (uint8_t*)malloc(bufferSize);
         if (!buffer) { CloseHandle(hFile); return -1; }
 

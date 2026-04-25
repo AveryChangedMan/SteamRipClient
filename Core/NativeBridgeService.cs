@@ -165,7 +165,7 @@ namespace SteamRipApp.Core
                    "                if (window.__steamPlayHijackerObserver) window.__steamPlayHijackerObserver.disconnect();\n" +
                    "                document.querySelectorAll('[data-hijacked]').forEach(el => {\n" +
                    "                    el.removeAttribute('data-hijacked');\n" +
-                   "                    location.reload(); 
+                   "                    location.reload(); // Hard reset is safest to restore Steam UI state\n" +
                    "                });\n" +
                    "                window._steamIntegrationInjected = false;\n" +
                    "                clearInterval(_mainInterval);\n" +
