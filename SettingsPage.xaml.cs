@@ -28,19 +28,16 @@ namespace SteamRipApp
             foreach (var dir in GlobalSettings.ScanDirectories) ScanDirs.Add(dir);
             DirList.ItemsSource = ScanDirs;
 
-            
             DownloadDirLabel.Text = string.IsNullOrEmpty(GlobalSettings.DownloadDirectory)
                 ? "Not set — you will be prompted on first download."
                 : GlobalSettings.DownloadDirectory;
 
-
-            
             if (GlobalSettings.DownloadSpeedUnit == SpeedUnit.Bits) SpeedBitsRadio.IsChecked = true;
             else SpeedBytesRadio.IsChecked = true;
 
-            
-            var method = GlobalSettings.PreferredExtractionMethod ?? ExtractionMethod.WinRAR;
-            if (method == ExtractionMethod.WinRAR) ExtractWinRarRadio.IsChecked = true;
+            var method = GlobalSettings.PreferredExtractionMethod;
+            if (method == ExtractionMethod.UnRarDLL) ExtractUnRarDLLRadio.IsChecked = true;
+            else if (method == ExtractionMethod.WinRAR) ExtractWinRarRadio.IsChecked = true;
             else if (method == ExtractionMethod.SevenZip) ExtractSevenZipRadio.IsChecked = true;
             else ExtractWindowsRadio.IsChecked = true;
 
@@ -54,6 +51,10 @@ namespace SteamRipApp
 
         private void UpdateToolStatus()
         {
+            var unrarDll = ArchiveExtractor.FindUnRarDLL();
+            UnRarDllStatus.Text = unrarDll != null ? "✅ Internal - Ready" : "❌ Internal Binary Missing";
+            UnRarDllStatus.Opacity = unrarDll != null ? 1.0 : 0.7;
+
             var winrar = ArchiveExtractor.FindWinRar();
             WinRarStatus.Text = winrar != null ? "✅ Installed" : "❌ Not Found";
             WinRarStatus.Opacity = winrar != null ? 1.0 : 0.7;
@@ -96,48 +97,33 @@ namespace SteamRipApp
 
         private async void ChangeDownloadDir_Click(object sender, RoutedEventArgs e)
         {
-            var picker = new FolderPicker();
-            picker.SuggestedStartLocation = PickerLocationId.Downloads;
-            picker.FileTypeFilter.Add("*");
-
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)Application.Current).m_window);
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder != null)
+            var path = await PickerService.PickFolderAsync();
+            if (!string.IsNullOrEmpty(path))
             {
-                GlobalSettings.DownloadDirectory = folder.Path;
+                GlobalSettings.DownloadDirectory = path;
                 GlobalSettings.HasSelectedDownloadDirectory = true;
 
-                if (!GlobalSettings.ScanDirectories.Contains(folder.Path))
+                if (!GlobalSettings.ScanDirectories.Contains(path))
                 {
-                    GlobalSettings.ScanDirectories.Add(folder.Path);
-                    ScanDirs.Add(folder.Path);
+                    GlobalSettings.ScanDirectories.Add(path);
+                    ScanDirs.Add(path);
                 }
 
                 GlobalSettings.Save();
-                DownloadDirLabel.Text = folder.Path;
-                Logger.Log($"[Settings] Default download dir changed to: {folder.Path}");
+                DownloadDirLabel.Text = path;
+                Logger.Log($"[Settings] Default download dir changed to: {path}");
             }
         }
 
         private async void AddDir_Click(object sender, RoutedEventArgs e)
         {
-            var folderPicker = new FolderPicker();
-            folderPicker.SuggestedStartLocation = PickerLocationId.ComputerFolder;
-            folderPicker.FileTypeFilter.Add("*");
-
-            
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)Application.Current).m_window);
-            WinRT.Interop.InitializeWithWindow.Initialize(folderPicker, hwnd);
-
-            var folder = await folderPicker.PickSingleFolderAsync();
-            if (folder != null)
+            var path = await PickerService.PickFolderAsync();
+            if (!string.IsNullOrEmpty(path))
             {
-                if (!GlobalSettings.ScanDirectories.Contains(folder.Path))
+                if (!GlobalSettings.ScanDirectories.Contains(path))
                 {
-                    GlobalSettings.ScanDirectories.Add(folder.Path);
-                    ScanDirs.Add(folder.Path);
+                    GlobalSettings.ScanDirectories.Add(path);
+                    ScanDirs.Add(path);
                     GlobalSettings.Save();
                 }
             }
@@ -153,13 +139,12 @@ namespace SteamRipApp
             }
         }
 
-
         private async void RepairSync_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn)
             {
                 btn.IsEnabled = false;
-                
+
                 await Task.Run(async () => {
                     await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories);
                 });
@@ -173,27 +158,24 @@ namespace SteamRipApp
                 CloseButtonText = "OK",
                 XamlRoot = this.XamlRoot
             };
-            await dialog.ShowAsync();
+            await App.ShowDialogSafeAsync(dialog);
         }
         private void AdvancedModeToggle_Toggled(object sender, RoutedEventArgs e)
         {
+            if (_isLoading) return;
             if (AdvancedModeToggle.IsOn != GlobalSettings.IsAdvancedModeEnabled)
             {
                 GlobalSettings.IsAdvancedModeEnabled = AdvancedModeToggle.IsOn;
                 GlobalSettings.Save();
-                
-                
-                var mw = (Application.Current as App)?.m_window as MainWindow;
-                mw?.UpdateAdvancedTabsVisibility();
             }
         }
+
         private void HardRepairToggle_Toggled(object sender, RoutedEventArgs e)
         {
             if (_isLoading) return;
             GlobalSettings.IsHardRepairEnabled = HardRepairToggle.IsOn;
             GlobalSettings.Save();
         }
-
 
         private void MultiThreadedHashingToggle_Toggled(object sender, RoutedEventArgs e)
         {
@@ -213,15 +195,37 @@ namespace SteamRipApp
                 GlobalSettings.IsSteamIntegrationEnabled = SteamIntegrationToggle.IsOn;
                 GlobalSettings.Save();
 
+                var mw = (Application.Current as App)?.m_window as MainWindow;
+                mw?.UpdateAdvancedTabsVisibility();
+
                 if (GlobalSettings.IsSteamIntegrationEnabled)
                 {
-                    (Application.Current as App)?.EnsureWorkerRunning();
+                    Logger.Log("[Settings] Steam Integration Tab shown.");
                 }
                 else
                 {
-                    
-                    Logger.Log("[Settings] Steam Integration disabled. Background worker will shut down shortly.");
+                    Logger.Log("[Settings] Steam Integration Tab hidden.");
                 }
+            }
+        }
+
+        private async void SetupBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "Reset to Initial Setup?",
+                Content = "This will reset all your settings and preferences. Your library and downloaded games will NOT be deleted. The app will restart to show the setup screen.",
+                PrimaryButtonText = "Reset & Restart",
+                CloseButtonText = "Cancel",
+                XamlRoot = this.XamlRoot
+            };
+
+            var result = await App.ShowDialogSafeAsync(dialog);
+            if (result == ContentDialogResult.Primary)
+            {
+                GlobalSettings.ResetSettings();
+
+                Microsoft.Windows.AppLifecycle.AppInstance.Restart("");
             }
         }
     }

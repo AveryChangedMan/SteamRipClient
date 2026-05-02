@@ -13,7 +13,7 @@ namespace SteamRipApp.Core
 
             try
             {
-                
+
                 if (hostPageUrl.Contains("gofile.io/d/"))
                 {
                     Logger.Log($"[UrlResolver] Resolving GoFile: {hostPageUrl}");
@@ -21,14 +21,12 @@ namespace SteamRipApp.Core
                     return links.FirstOrDefault() ?? "";
                 }
 
-                
                 if (hostPageUrl.Contains("buzzheavier") || hostPageUrl.Contains("bzzhr.to"))
                 {
                     Logger.Log($"[UrlResolver] Resolving Buzzheavier: {hostPageUrl}");
                     return await SteamRipScraper.ExtractBuzzheavierDirectUrlAsync(hostPageUrl);
                 }
 
-                
                 if (hostPageUrl.Contains("/download/") || hostPageUrl.EndsWith(".rar") || hostPageUrl.EndsWith(".zip"))
                 {
                     return hostPageUrl;

@@ -14,7 +14,6 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        
         <Grid x:Name="AppTitleBar" Background="Transparent" Height="48" VerticalAlignment="Top" Grid.Row="0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -22,30 +21,31 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            
+
             <StackPanel Orientation="Horizontal" Padding="12,0,0,0">
+                <Image Source="ms-appx:///Assets/app_icon.png" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,0,0"/>
                 <TextBlock Text="SteamRIP Engine" VerticalAlignment="Center" Margin="12,0,0,0" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="Bold"/>
             </StackPanel>
         </Grid>
 
-        <NavigationView x:Name="NavView" 
+        <NavigationView x:Name="NavView"
                         Grid.Row="1"
                         PaneDisplayMode="Left"
                         IsBackButtonVisible="Collapsed"
                         ItemInvoked="NavView_ItemInvoked">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Home" Icon="Home" Tag="home"/>
-                <NavigationViewItem x:Name="SteamNavItem" Content="Steam (Unstable)" Icon="Globe" Tag="steam"/>
+                <NavigationViewItem x:Name="SteamNavItem" Content="Steam (Beta)" Icon="Globe" Tag="steam"/>
                 <NavigationViewItem Content="Downloads" Icon="Download" Tag="downloads"/>
                 <NavigationViewItem Content="Library" Icon="Library" Tag="library"/>
-                <NavigationViewItem x:Name="IntegrationNavItem" Content="Steam Integration" Icon="SetlockScreen" Tag="integration"/>
-                <NavigationViewItem Content="CleanUp" Icon="Refresh" Tag="cleanup"/>
+
+                <NavigationViewItem Content="CleanUp" Icon="Delete" Tag="cleanup"/>
                 <NavigationViewItem Content="Help" Icon="Help" Tag="help"/>
             </NavigationView.MenuItems>
 
             <NavigationView.PaneFooter>
                 <StackPanel Orientation="Vertical">
-                    
+
                     <StackPanel x:Name="HashingStatusArea" Orientation="Vertical" Padding="16,0,16,16" Spacing="8" Visibility="Collapsed">
                         <TextBlock Text="Verification Active" FontSize="11" FontWeight="Bold" Opacity="0.6"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -58,7 +58,6 @@
                         <ProgressBar x:Name="HashingProgressBar" Minimum="0" Maximum="100" Height="4" IsIndeterminate="False"/>
                     </StackPanel>
 
-                    
                     <StackPanel x:Name="GlobalMoveStatus" Orientation="Vertical" Padding="16,0,16,16" Spacing="8" Visibility="Collapsed">
                         <TextBlock Text="Process Active" FontSize="11" FontWeight="Bold" Opacity="0.6"/>
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -78,27 +77,148 @@
             </NavigationView.Content>
         </NavigationView>
 
-        
-        <Border x:Name="ConfigOverlay" 
-                Visibility="Collapsed" 
-                Grid.RowSpan="2" 
+        <Border x:Name="ConfigOverlay"
+                Visibility="Collapsed"
+                Grid.RowSpan="2"
                 Background="{ThemeResource SystemControlPageBackgroundMediumAltMediumBrush}">
-            <Grid VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="500" Padding="32" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="8">
+            <Grid VerticalAlignment="Center" HorizontalAlignment="Center" Width="600" Padding="32" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="8">
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="ConfigTitle" Text="Game Configuration" Style="{StaticResource TitleTextBlockStyle}"/>
                     <ScrollViewer MaxHeight="400">
                         <StackPanel x:Name="ConfigOptionsList" Spacing="8">
-                            
+
                         </StackPanel>
                     </ScrollViewer>
                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,20,0,0">
-                        <Button x:Name="HardRepairBtn" Content="🛠 Hard Repair" Click="HardRepair_Click" Style="{StaticResource AccentButtonStyle}" Width="120"/>
                         <Button Content="Save" Click="SaveConfig_Click" Style="{StaticResource AccentButtonStyle}" Width="80"/>
                         <Button Content="Cancel" Click="CancelConfig_Click" Width="80"/>
                     </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
+        <Border x:Name="SetupOverlay"
+                Visibility="Collapsed"
+                Grid.RowSpan="2"
+                Background="{ThemeResource SystemControlPageBackgroundMediumAltMediumBrush}">
+            <Grid VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="500" Width="500" Padding="40" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="16" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
+                <StackPanel Spacing="24">
+                    <TextBlock Text="First Launch Setup" Style="{StaticResource TitleTextBlockStyle}" HorizontalAlignment="Center" FontWeight="Bold"/>
+
+                    <StackPanel x:Name="SetupStepList" Spacing="16">
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="Step1Icon" Glyph="&#xE73E;" FontSize="16" Foreground="Gray"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Download Directory" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="Step1Path" Text="Not selected" FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+                            <Button Grid.Column="2" Content="Select" Click="SetupSelectFolder_Click" Style="{StaticResource AccentButtonStyle}" Padding="12,4"/>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="Step2Icon" Glyph="&#xE73E;" FontSize="16" Foreground="Gray"/>
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Core Configuration" FontWeight="SemiBold"/>
+                                <CheckBox x:Name="SetupHardRepairCheck" Content="Enable Enhanced Repair Mode" IsChecked="True" FontSize="12"/>
+                                <CheckBox x:Name="SetupMultiThreadCheck" Content="Multi-threaded Hashing" IsChecked="True" FontSize="12"/>
+                                <CheckBox x:Name="SetupRarMapCheck" Content="Always Create RAR Maps" IsChecked="True" FontSize="12"/>
+                                <CheckBox x:Name="SetupSteamCheck" Content="Steam Integration" IsChecked="True" FontSize="12"/>
+                                <CheckBox x:Name="SetupDefenderCheck" Content="Antivirus Exclusion" IsChecked="True" FontSize="12"/>
+
+                                <StackPanel Spacing="2" Margin="0,4,0,0">
+                                    <TextBlock Text="Hashing Speed Cap (MB/s)" FontSize="11" Opacity="0.8"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="SetupSpeedSlider" Minimum="0" Maximum="500" Value="0" StepFrequency="10" TickFrequency="50" TickPlacement="BottomRight"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Value, ElementName=SetupSpeedSlider}" VerticalAlignment="Center" Margin="12,0,0,0" Width="30" FontSize="12"/>
+                                    </Grid>
+                                    <TextBlock Text="(0 = Unlimited. Recommended for HDD: 50)" FontSize="10" Opacity="0.6"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid x:Name="SetupScanStep" Opacity="0.5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="Step3Icon" Glyph="&#xE73E;" FontSize="16" Foreground="Gray"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Scan Locations" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="Step3Status" Text="Additional folders to scan for games" FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+                            <Button Grid.Column="2" Content="Manage" Click="SetupScanManage_Click" IsEnabled="False" x:Name="SetupScanBtn" Style="{StaticResource AccentButtonStyle}" Padding="12,4"/>
+                        </Grid>
+
+                        <Grid x:Name="SetupLegacyStep" Opacity="0.5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="Step4Icon" Glyph="&#xE73E;" FontSize="16" Foreground="Gray"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Maintenance" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="Step4Status" Text="Checking for legacy emulator patches..." FontSize="11" Opacity="0.6"/>
+                            </StackPanel>
+                            <Button Grid.Column="2" Content="Run Check" Click="SetupLegacyCheck_Click" IsEnabled="False" x:Name="SetupLegacyBtn" Style="{StaticResource AccentButtonStyle}" Padding="12,4"/>
+                        </Grid>
+
+                        <Grid x:Name="SetupFinishStep" Opacity="0.5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon x:Name="Step5Icon" Glyph="&#xE73E;" FontSize="16" Foreground="Gray"/>
+                            <TextBlock Grid.Column="1" Text="Ready to Launch" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <Button x:Name="FinishSetupBtn" Content="COMPLETE SETUP" Click="FinishSetup_Click" IsEnabled="False" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" Height="45" FontWeight="Bold"/>
+                </StackPanel>
+            </Grid>
+        </Border>
         <WebView2 x:Name="RepairInterceptor" Visibility="Collapsed" Width="1" Height="1" Grid.RowSpan="2"/>
+
+        <Border x:Name="GlobalProgressOverlay"
+                Visibility="Collapsed"
+                Grid.RowSpan="2"
+                Background="#AA000000"
+                Canvas.ZIndex="999">
+            <Grid VerticalAlignment="Center" HorizontalAlignment="Center" Width="420" Padding="32" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="16" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
+                <StackPanel Spacing="20">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="GlobalOverlayTitle" Text="Operation in Progress" Style="{StaticResource TitleTextBlockStyle}" FontWeight="Bold"/>
+                        <ProgressRing Grid.Column="1" IsActive="True" Width="24" Height="24" Margin="12,0,0,0"/>
+                    </Grid>
+
+                    <ProgressBar x:Name="GlobalOverlayProgressBar" Minimum="0" Maximum="100" Height="12" CornerRadius="6"/>
+
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="GlobalOverlayStatus" Text="Initializing..." HorizontalAlignment="Center" Opacity="0.8" TextWrapping="Wrap" TextAlignment="Center"/>
+                        <TextBlock x:Name="GlobalOverlaySubStatus" Text="" HorizontalAlignment="Center" FontSize="11" Opacity="0.5" TextWrapping="Wrap" TextAlignment="Center"/>
+                    </StackPanel>
+
+                    <Button Content="Run in Background" Click="GlobalOverlayHide_Click" HorizontalAlignment="Stretch" Height="40" Style="{StaticResource AccentButtonStyle}" Margin="0,10,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

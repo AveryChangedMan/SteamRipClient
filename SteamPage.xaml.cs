@@ -33,23 +33,23 @@ namespace SteamRipApp
         {
             UpdateSteamBtn.IsEnabled = false;
             StatusLabel.Text = "Restarting Steam to apply changes...";
-            
+
             await Task.Run(() => {
                 var steamPath = SteamManager.GetSteamPath();
                 if (!string.IsNullOrEmpty(steamPath))
                 {
                     SteamManager.KillSteamProcess();
-                    System.Threading.Thread.Sleep(2000); 
+                    System.Threading.Thread.Sleep(2000);
                     SteamManager.RelaunchSteam(steamPath);
                 }
             });
 
             GlobalSettings.IsSteamUpdateRequired = false;
             GlobalSettings.Save();
-            
+
             UpdateSteamBtn.Visibility = Visibility.Collapsed;
             StatusLabel.Text = "✅ Steam updated and restarted.";
-            
+
             await RefreshLibrary();
         }
 
@@ -60,7 +60,6 @@ namespace SteamRipApp
                 LibraryGames.Clear();
                 Logger.Log("[SteamPage] Starting library refresh for Steam integration.");
 
-                
                 var results = await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories, null);
                 Logger.Log($"[SteamPage] Scanner found {results.Count} candidates.");
 
@@ -68,18 +67,17 @@ namespace SteamRipApp
 
                 foreach (var game in results)
                 {
-                    
+
                     if (GlobalSettings.GamePageLinks.TryGetValue(game.RootPath, out var savedUrl) && !string.IsNullOrEmpty(savedUrl))
                         game.Url = savedUrl;
 
-                    
                     if (!game.IsSteamIntegrated && game.SteamAppId.HasValue)
                     {
                         string? steamPath = SteamManager.GetSteamPath();
                         if (!string.IsNullOrEmpty(steamPath) && File.Exists(Path.Combine(steamPath, "steamapps", $"appmanifest_{game.SteamAppId}.acf")))
                         {
                             game.IsSteamIntegrated = true;
-                            
+
                             var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath == game.RootPath);
                             if (meta != null)
                             {
@@ -92,13 +90,12 @@ namespace SteamRipApp
                     DispatcherQueue.TryEnqueue(() => LibraryGames.Add(game));
                 }
 
-                
                 foreach (var meta in GlobalSettings.Library)
                 {
-                    
-                    if (scannedPaths.Contains(meta.LocalPath)) continue; 
-                    if (scannedPaths.Any(p => 
-                        meta.LocalPath.StartsWith(p, StringComparison.OrdinalIgnoreCase) || 
+
+                    if (scannedPaths.Contains(meta.LocalPath)) continue;
+                    if (scannedPaths.Any(p =>
+                        meta.LocalPath.StartsWith(p, StringComparison.OrdinalIgnoreCase) ||
                         p.StartsWith(meta.LocalPath, StringComparison.OrdinalIgnoreCase)))
                     {
                         continue;
@@ -118,7 +115,6 @@ namespace SteamRipApp
                         IsEmulatorApplied = meta.IsEmulatorApplied
                     };
 
-                    
                     if (!gf.IsSteamIntegrated && gf.SteamAppId.HasValue)
                     {
                         string? steamPath = SteamManager.GetSteamPath();
@@ -160,7 +156,6 @@ namespace SteamRipApp
                 var steamPath = SteamManager.GetSteamPath();
                 if (string.IsNullOrEmpty(steamPath)) return;
 
-                
                 var linksToCreate = new List<(string source, string target)>();
                 foreach (var gf in selected)
                 {
@@ -168,8 +163,7 @@ namespace SteamRipApp
                     {
                         string cleanExe = gf.ExecutablePath.Trim('\"');
                         string exeFolder = Path.GetDirectoryName(cleanExe) ?? "";
-                        
-                        
+
                         string targetDir = Path.Combine(steamPath, "steamapps", "common", gf.Title);
                         linksToCreate.Add((gf.RootPath, targetDir));
                     }
@@ -177,16 +171,14 @@ namespace SteamRipApp
 
                 if (linksToCreate.Count > 0)
                 {
-                    StatusLabel.Text = "Requesting permission for filesystem links...";
-                    NativeBridgeService.BatchSymlinks(linksToCreate);
+                    Logger.Log($"[SteamPage] Shortcut preparation complete for {linksToCreate.Count} games.");
                 }
 
-                
                 int successCount = 0;
                 for (int i = 0; i < selected.Count; i++)
                 {
                     var gf = selected[i];
-                    
+
                     if (!gf.HasAppId)
                     {
                         Logger.Log($"[SteamPage] Skipping '{gf.Title}' - missing AppID.");
@@ -194,19 +186,19 @@ namespace SteamRipApp
                     }
 
                     StatusLabel.Text = $"[{i + 1}/{selected.Count}] Processing '{gf.Title}'...";
-                    
+
                     bool success = await PerformImport(gf);
                     if (success) successCount++;
                 }
 
                 StatusLabel.Text = $"✅ Finished! {successCount}/{selected.Count} games integrated.";
-                
-                await new ContentDialog {
+
+                _ = App.ShowDialogSafeAsync(new ContentDialog {
                     Title = "Bulk Import Complete",
                     Content = $"Successfully integrated {successCount} out of {selected.Count} selected games into Steam.",
                     CloseButtonText = "OK",
                     XamlRoot = this.XamlRoot
-                }.ShowAsync();
+                });
 
             }
             finally
@@ -225,12 +217,12 @@ namespace SteamRipApp
                     bool success = await PerformImport(gf);
                     if (success)
                     {
-                        await new ContentDialog {
+                        _ = App.ShowDialogSafeAsync(new ContentDialog {
                             Title = "Game Integrated",
                             Content = $"'{gf.Title}' has been added to your Steam library with professional artwork.",
                             CloseButtonText = "OK",
                             XamlRoot = this.XamlRoot
-                        }.ShowAsync();
+                        });
                     }
                 }
             }
@@ -268,8 +260,7 @@ namespace SteamRipApp
                         meta.IsSteamIntegrated = true;
                         GlobalSettings.Save();
                     }
-                    
-                    
+
                     gf.IsSteamIntegrated = true;
 
                     StatusLabel.Text = $"✅ '{gf.Title}' integrated.";
@@ -306,10 +297,10 @@ namespace SteamRipApp
                     XamlRoot = this.XamlRoot
                 };
 
-                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary)
                 {
                     StatusLabel.Text = $"Removing '{gf.Title}' from Steam...";
-                    
+
                     bool success = await SteamManager.RemoveGameFromSteam(gf.Title, gf.ExecutablePath ?? "");
                     if (success)
                     {
@@ -319,10 +310,9 @@ namespace SteamRipApp
                             meta.IsSteamIntegrated = false;
                             GlobalSettings.Save();
                         }
-                        
-                        
+
                         gf.IsSteamIntegrated = false;
-                        
+
                         StatusLabel.Text = $"🗑 '{gf.Title}' removed from Steam.";
                     }
                     else
@@ -357,13 +347,13 @@ namespace SteamRipApp
             try {
                 SteamSearchLoading.IsActive = true;
                 SteamSearchResults.Clear();
-                
+
                 string term = args.QueryText;
                 string url = $"https://store.steampowered.com/api/storesearch/?term={Uri.EscapeDataString(term)}&l=english&cc=US";
                 using var client = new System.Net.Http.HttpClient();
                 string json = await client.GetStringAsync(url);
                 var response = System.Text.Json.JsonSerializer.Deserialize<SteamStoreSearchResponse>(json);
-                
+
                 if (response?.items != null)
                 {
                     foreach (var item in response.items)
@@ -399,17 +389,17 @@ namespace SteamRipApp
 
         private void ApplyAppId(GameFolder gf, int appId)
         {
-            
+
             string cleanPath = gf.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var meta = GlobalSettings.Library.FirstOrDefault(m => 
+            var meta = GlobalSettings.Library.FirstOrDefault(m =>
                 m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 .Equals(cleanPath, StringComparison.OrdinalIgnoreCase));
 
             if (meta != null)
             {
-                
+
                 string? oldIdStr = meta.ManualSteamAppId?.ToString() ?? meta.SteamAppId?.ToString();
-                
+
                 if (meta.IsSteamIntegrated && !string.IsNullOrEmpty(oldIdStr) && oldIdStr != appId.ToString())
                 {
                     if (GlobalSettings.MemoryTable.TryGetValue(oldIdStr, out var shortcutId))
@@ -424,22 +414,19 @@ namespace SteamRipApp
                 GlobalSettings.Save();
                 Logger.Log($"[SteamPage] Universally updated metadata for '{gf.Title}' to AppID {appId}");
 
-                
                 ScannerEngine.UpdateAppIdInFiles(gf.RootPath, appId);
             }
             else
             {
-                
+
                 var newMeta = new GameMetadata { LocalPath = gf.RootPath, Title = gf.Title, ManualSteamAppId = appId };
                 GlobalSettings.Library.Add(newMeta);
                 GlobalSettings.Save();
                 Logger.Log($"[SteamPage] Created universal metadata for '{gf.Title}' with AppID {appId}");
             }
 
-            
             gf.SteamAppId = appId;
-            
-            
+
             var index = LibraryGames.IndexOf(gf);
             if (index != -1)
             {

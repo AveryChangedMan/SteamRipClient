@@ -30,7 +30,7 @@ namespace SteamRipApp.Core
         public string Steam64Id { get; set; } = "";
         public string AccountName { get; set; } = "";
         public string PersonaName { get; set; } = "";
-        public string AccountId { get; set; } = ""; 
+        public string AccountId { get; set; } = "";
         public bool IsMostRecent { get; set; }
     }
 
@@ -115,7 +115,7 @@ namespace SteamRipApp.Core
             }
             return false;
         }
-    
+
         public static void KillSteamProcess()
         {
             try {
@@ -146,17 +146,16 @@ namespace SteamRipApp.Core
         public static async Task<int?> LookupAppIdAsync(string gameTitle)
         {
             try {
-                NativeBridgeService.Log($"Searching Steam Store for: '{gameTitle}'", "SYSTEM");
+                Logger.Log($"Searching Steam Store for: '{gameTitle}'");
                 string url = $"https://store.steampowered.com/api/storesearch/?term={Uri.EscapeDataString(gameTitle)}&l=english&cc=US";
                 string json = await _httpClient.GetStringAsync(url);
                 var response = JsonSerializer.Deserialize<SteamStoreSearchResponse>(json);
                 if (response?.items != null && response.items.Count > 0)
                 {
-                    
-                    
+
                     string cleanTitle = Regex.Replace(gameTitle, @"[^a-zA-Z0-9\s]", "").ToLower();
                     string[] titleWords = cleanTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    
+
                     var bestMatch = response.items[0];
                     int maxMatches = 0;
 
@@ -164,7 +163,7 @@ namespace SteamRipApp.Core
                     {
                         string cleanItemName = Regex.Replace(item.name, @"[^a-zA-Z0-9\s]", "").ToLower();
                         int matchCount = titleWords.Count(w => cleanItemName.Contains(w));
-                        
+
                         if (matchCount > maxMatches)
                         {
                             maxMatches = matchCount;
@@ -172,12 +171,12 @@ namespace SteamRipApp.Core
                         }
                         else if (matchCount == maxMatches && Math.Abs(item.name.Length - gameTitle.Length) < Math.Abs(bestMatch.name.Length - gameTitle.Length))
                         {
-                            
+
                             bestMatch = item;
                         }
                     }
 
-                    NativeBridgeService.Log($"Matched: {bestMatch.name} (ID: {bestMatch.id}) with {maxMatches} word matches", "SYSTEM");
+                    Logger.Log($"Matched: {bestMatch.name} (ID: {bestMatch.id}) with {maxMatches} word matches");
                     return bestMatch.id;
                 }
             } catch { }
@@ -215,10 +214,10 @@ namespace SteamRipApp.Core
         private static string FindGameRoot(string startPath)
         {
             string current = startPath;
-            string[] noise = { 
-                "binaries", "bin", "win64", "win32", "shipping", "x64", "x86", "helios", "engine", 
-                "content", "plugins", "redist", "commonredist", "thirdparty", "steamworks", 
-                "steamv132", "steamv153", "steamv147", "steamv157" 
+            string[] noise = {
+                "binaries", "bin", "win64", "win32", "shipping", "x64", "x86", "helios", "engine",
+                "content", "plugins", "redist", "commonredist", "thirdparty", "steamworks",
+                "steamv132", "steamv153", "steamv147", "steamv157"
             };
 
             while (!string.IsNullOrEmpty(current) && Directory.Exists(current))
@@ -229,10 +228,10 @@ namespace SteamRipApp.Core
                 string parent = Path.GetDirectoryName(current) ?? "";
                 bool parentHasEngine = !string.IsNullOrEmpty(parent) && Directory.Exists(Path.Combine(parent, "Engine"));
 
-                if (isNoise || parentHasEngine || name.EndsWith("ue5") || name.EndsWith("ue4")) 
-                { 
-                    current = parent; 
-                    continue; 
+                if (isNoise || parentHasEngine || name.EndsWith("ue5") || name.EndsWith("ue4"))
+                {
+                    current = parent;
+                    continue;
                 }
                 break;
             }
@@ -249,14 +248,14 @@ namespace SteamRipApp.Core
 
         public static async Task<bool> ImportGameToSteam(string gameTitle, string exePath, int? steamAppId = null)
         {
-            NativeBridgeService.Log($"Integrating: {gameTitle}", "SYSTEM");
+            Logger.Log($"Integrating: {gameTitle}");
             var steamPath = GetSteamPath();
             if (string.IsNullOrEmpty(steamPath)) return false;
 
             bool wasSteamOpen = IsSteamRunning();
-            if (wasSteamOpen) 
+            if (wasSteamOpen)
             {
-                NativeBridgeService.Log("Steam is running. Restarting to apply integration changes...", "SYSTEM");
+                Logger.Log("Steam is running. Restarting to apply integration changes...");
                 KillSteamProcess();
             }
 
@@ -274,8 +273,7 @@ namespace SteamRipApp.Core
 
             if (steamAppId.HasValue)
             {
-                NativeBridgeService.Log($"ID {steamAppId.Value} found. Linking...", "SYSTEM");
-                await NativeBridgeService.IntegrateGame(gameFolder, steamAppId.Value, gameTitle);
+                Logger.Log($"ID {steamAppId.Value} found. Linking shortcut...");
             }
 
             foreach (var userId in userIds)
@@ -300,15 +298,14 @@ namespace SteamRipApp.Core
                     ulong longId = CalculateLongId(shortcutAppId);
                     GlobalSettings.MemoryTable[steamAppId.Value.ToString()] = longId.ToString();
                     GlobalSettings.Save();
-                    NativeBridgeService.Log($"Mapped AppID {steamAppId.Value} to Shortcut {longId}", "CONFIG");
+                    Logger.Log($"Mapped AppID {steamAppId.Value} to Shortcut {longId}");
                 }
 
                 if (steamAppId.HasValue) await DownloadAssetsAsync(steamAppId.Value, shortcutAppId, gridPath);
             }
-            
-            NativeBridgeService.HideWorkerShortcuts();
+
             if (wasSteamOpen) RelaunchSteam(steamPath);
-            NativeBridgeService.Log($"Completed: {gameTitle} is now integrated.", "SYSTEM");
+            Logger.Log($"Completed: {gameTitle} is now integrated.");
             return true;
         }
 
@@ -319,10 +316,10 @@ namespace SteamRipApp.Core
                 if (string.IsNullOrEmpty(steamPath)) return false;
 
                 bool wasSteamOpen = IsSteamRunning();
-                if (wasSteamOpen) 
+                if (wasSteamOpen)
                 {
-                    NativeBridgeService.Log("Steam is running. Changes will be visible after manual update or Steam restart.", "SYSTEM");
-                    
+                    Logger.Log("Steam is running. Changes will be visible after manual update or Steam restart.");
+
                 }
 
                 var userIds = GetSteamUserIds(steamPath);
@@ -352,9 +349,13 @@ namespace SteamRipApp.Core
                         }
                     }
                 }
-                
+
                 return true;
             } catch { return false; }
+        }
+        public static async Task<bool> AddNonSteamGame(string gameTitle, string exePath)
+        {
+            return await ImportGameToSteam(gameTitle, exePath, null);
         }
     }
 }

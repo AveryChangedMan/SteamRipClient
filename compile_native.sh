@@ -1,5 +1,4 @@
-
-
+cd "$(dirname "$0")"
 
 mkdir -p Redist
 

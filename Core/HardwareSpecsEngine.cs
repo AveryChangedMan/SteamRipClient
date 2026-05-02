@@ -12,7 +12,7 @@ namespace SteamRipApp.Core
         {
             var specs = new LocalMachineSpecs();
             try {
-                
+
                 using (var searcher = new ManagementObjectSearcher("SELECT Caption FROM Win32_OperatingSystem"))
                 {
                     foreach (var obj in searcher.Get())
@@ -22,7 +22,6 @@ namespace SteamRipApp.Core
                     }
                 }
 
-                
                 using (var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_Processor"))
                 {
                     foreach (var obj in searcher.Get())
@@ -32,7 +31,6 @@ namespace SteamRipApp.Core
                     }
                 }
 
-                
                 using (var searcher = new ManagementObjectSearcher("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem"))
                 {
                     foreach (var obj in searcher.Get())
@@ -45,7 +43,6 @@ namespace SteamRipApp.Core
                     }
                 }
 
-                
                 using (var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController"))
                 {
                     foreach (var obj in searcher.Get())
@@ -78,54 +75,81 @@ namespace SteamRipApp.Core
                 requireName = requireName.ToLowerInvariant();
                 var reqLower = requireValue.ToLowerInvariant();
 
-                
+                var parts = reqLower.Split(new string[] { "/", "|", " or " }, StringSplitOptions.RemoveEmptyEntries);
+
                 if (requireName.Contains("storage") || requireName.Contains("disk") || requireName.Contains("space"))
                 {
                     var match = Regex.Match(reqLower, @"(\d+)\s*(gb|mb)");
                     if (match.Success)
                     {
-                        int reqSpace = int.Parse(match.Groups[1].Value);
-                        if (match.Groups[2].Value == "mb") reqSpace = reqSpace / 1024;
-                        if (reqSpace == 0) reqSpace = 1;
-                        
-                        int available = GetDriveFreeSpaceGB(gamePath ?? AppDomain.CurrentDomain.BaseDirectory);
-                        return available >= reqSpace;
+                        if (double.TryParse(match.Groups[1].Value, out double reqSpace))
+                        {
+                            if (match.Groups[2].Value == "mb") reqSpace = reqSpace / 1024.0;
+                            if (reqSpace < 0.1) reqSpace = 1;
+
+                            int available = GetDriveFreeSpaceGB(gamePath ?? AppDomain.CurrentDomain.BaseDirectory);
+                            return available >= reqSpace;
+                        }
                     }
                 }
 
-                
                 if (requireName.Contains("memory") || requireName.Contains("ram"))
                 {
                     var match = Regex.Match(reqLower, @"(\d+)\s*(gb|mb)");
                     if (match.Success)
                     {
-                        int reqMem = int.Parse(match.Groups[1].Value);
-                        if (match.Groups[2].Value == "mb") reqMem = reqMem / 1024;
-                        if (reqMem == 0) reqMem = 1;
-                        return local.MemoryGB >= reqMem;
+                        if (double.TryParse(match.Groups[1].Value, out double reqMem))
+                        {
+                            if (match.Groups[2].Value == "mb") reqMem = reqMem / 1024.0;
+                            if (reqMem < 0.1) reqMem = 1;
+                            return local.MemoryGB >= reqMem;
+                        }
                     }
                 }
 
-                
                 if (requireName.Contains("os") || requireName.Contains("windows"))
                 {
                     if (reqLower.Contains("11") && !local.OperatingSystem.Contains("11")) return false;
-                    return true; 
+                    if (reqLower.Contains("64") && !Environment.Is64BitOperatingSystem) return false;
+                    return true;
                 }
 
-                
                 if (requireName.Contains("processor") || requireName.Contains("cpu"))
                 {
-                    var reqScore = GetHardwareScore(requireValue, false);
                     var localScore = GetHardwareScore(local.Processor, false);
-                    if (reqScore > 0 && localScore > 0) return localScore >= reqScore;
+                    if (localScore == 0) return null;
+
+                    bool anyPass = false;
+                    bool hadValidScore = false;
+                    foreach (var part in parts)
+                    {
+                        var reqScore = GetHardwareScore(part, false);
+                        if (reqScore > 0)
+                        {
+                            hadValidScore = true;
+                            if (localScore >= reqScore) anyPass = true;
+                        }
+                    }
+                    return hadValidScore ? anyPass : (bool?)null;
                 }
 
                 if (requireName.Contains("graphics") || requireName.Contains("gpu") || requireName.Contains("video card"))
                 {
-                    var reqScore = GetHardwareScore(requireValue, true);
                     var localScore = GetHardwareScore(local.VideoCard, true);
-                    if (reqScore > 0 && localScore > 0) return localScore >= reqScore;
+                    if (localScore == 0) return null;
+
+                    bool anyPass = false;
+                    bool hadValidScore = false;
+                    foreach (var part in parts)
+                    {
+                        var reqScore = GetHardwareScore(part, true);
+                        if (reqScore > 0)
+                        {
+                            hadValidScore = true;
+                            if (localScore >= reqScore) anyPass = true;
+                        }
+                    }
+                    return hadValidScore ? anyPass : (bool?)null;
                 }
 
                 return null;
@@ -143,7 +167,7 @@ namespace SteamRipApp.Core
             int tier = 0;
 
             if (isGpu) {
-                
+
                 if (name.Contains("rtx")) {
                     var m = Regex.Match(name, @"rtx\s*(\d)(\d)(\d)0");
                     if (m.Success) {
@@ -160,7 +184,7 @@ namespace SteamRipApp.Core
                         return gen * 10 + tier;
                     }
                 }
-                
+
                 if (name.Contains("rx")) {
                     var m = Regex.Match(name, @"rx\s*(\d)(\d)00");
                     if (m.Success) {
@@ -170,15 +194,15 @@ namespace SteamRipApp.Core
                     }
                 }
             } else {
-                
+
                 var mi = Regex.Match(name, @"i(\d)-(\d+)");
                 if (mi.Success) {
                     tier = int.Parse(mi.Groups[1].Value);
                     gen = int.Parse(mi.Groups[2].Value);
-                    if (gen > 100) gen = gen / 100; 
+                    if (gen > 100) gen = gen / 100;
                     return gen * 10 + tier;
                 }
-                
+
                 var mr = Regex.Match(name, @"ryzen\s*(\d)\s*(\d)");
                 if (mr.Success) {
                     tier = int.Parse(mr.Groups[1].Value);

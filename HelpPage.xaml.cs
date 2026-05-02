@@ -31,7 +31,7 @@ namespace SteamRipApp
         {
             _allHelpItems = new List<HelpItem>
             {
-                
+
                 new HelpItem {
                     Category = "TROUBLESHOOTING",
                     Question = "What if the game doesn't open, or opens and immediately closes?",
@@ -69,7 +69,6 @@ namespace SteamRipApp
                     Keywords = "steam unstable why broken"
                 },
 
-                
                 new HelpItem {
                     Category = "GOLDBERG PATCH",
                     Question = "What is the Goldberg Patch?",
@@ -101,7 +100,6 @@ namespace SteamRipApp
                     Keywords = "multiplayer goldberg lan matchmaking servers"
                 },
 
-                
                 new HelpItem {
                     Category = "STEAM INTEGRATION",
                     Question = "What is 'Steam Integration'?",
@@ -133,7 +131,6 @@ namespace SteamRipApp
                     Keywords = "restart steam reload library config"
                 },
 
-                
                 new HelpItem {
                     Category = "DOWNLOADS",
                     Question = "Why is my download speed slow?",
@@ -165,7 +162,6 @@ namespace SteamRipApp
                     Keywords = "storage folder path where"
                 },
 
-                
                 new HelpItem {
                     Category = "PERFORMANCE",
                     Question = "What is 'CPU Priority'?",
@@ -197,7 +193,6 @@ namespace SteamRipApp
                     Keywords = "admin administrator permissions save data"
                 },
 
-                
                 new HelpItem {
                     Category = "REDISTS",
                     Question = "What are 'Redistributables'?",
@@ -229,7 +224,6 @@ namespace SteamRipApp
                     Keywords = "automatic install uac"
                 },
 
-                
                 new HelpItem {
                     Category = "LIBRARY",
                     Question = "How do I add an existing game to the Library?",
@@ -279,7 +273,6 @@ namespace SteamRipApp
                     Keywords = "custom cover image art change"
                 },
 
-                
                 new HelpItem {
                     Category = "CLEANUP",
                     Question = "What is 'CleanUp'?",
@@ -311,7 +304,6 @@ namespace SteamRipApp
                     Keywords = "antivirus virus false positive gamehack pup"
                 },
 
-                
                 new HelpItem {
                     Category = "TROUBLESHOOTING",
                     Question = "The app says 'Steam Debugging Disabled'?",
@@ -353,8 +345,8 @@ namespace SteamRipApp
         private void FilterItems(string query)
         {
             _filteredItems.Clear();
-            var results = _allHelpItems.Where(i => 
-                i.Question.Contains(query, StringComparison.OrdinalIgnoreCase) || 
+            var results = _allHelpItems.Where(i =>
+                i.Question.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 i.Answer.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 i.Keywords.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 i.Category.Contains(query, StringComparison.OrdinalIgnoreCase)

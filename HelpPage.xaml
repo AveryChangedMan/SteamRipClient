@@ -16,9 +16,9 @@
 
         <TextBlock Text="Help &amp; Documentation" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16"/>
 
-        <AutoSuggestBox x:Name="HelpSearchBox" 
+        <AutoSuggestBox x:Name="HelpSearchBox"
                         Grid.Row="1"
-                        PlaceholderText="Search help topics..." 
+                        PlaceholderText="Search help topics..."
                         QueryIcon="Find"
                         TextChanged="HelpSearchBox_TextChanged"
                         Margin="0,0,0,24"
@@ -42,12 +42,12 @@
             </ListView.ItemTemplate>
         </ListView>
 
-        <TextBlock x:Name="NoResultsText" 
-                   Grid.Row="2" 
-                   Text="No topics match your search." 
-                   HorizontalAlignment="Center" 
-                   VerticalAlignment="Center" 
-                   Visibility="Collapsed" 
+        <TextBlock x:Name="NoResultsText"
+                   Grid.Row="2"
+                   Text="No topics match your search."
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Visibility="Collapsed"
                    Opacity="0.6"/>
     </Grid>
 </Page>

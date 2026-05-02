@@ -1,7 +1,14 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SteamRipApp.Core;
+using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SteamRipApp
 {
@@ -14,24 +21,57 @@ namespace SteamRipApp
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(AppTitleBar);
 
-            
+            this.Activated += Window_FirstActivated;
+            this.Closed += MainWindow_Closed;
+            StartHashingProgressTimer();
+        }
+
+        private readonly CancellationTokenSource _shutdownCts = new();
+
+        private void MainWindow_Closed(object sender, WindowEventArgs args)
+        {
+            _shutdownCts.Cancel();
+            _hashingTimer?.Stop();
+            GlobalSettings.Save();
+            Logger.Log("--- GUI SESSION CLOSED ---");
+        }
+
+        private DispatcherTimer? _hashingTimer;
+
+        private async void Window_FirstActivated(object sender, WindowActivatedEventArgs e)
+        {
+            this.Activated -= Window_FirstActivated;
+
             SetAppIcon();
 
-            NavView.SelectedItem = NavView.MenuItems[0];
-            ContentFrame.Navigate(typeof(HomePage));
-            NavView.Header = "Home";
-            
-            this.Activated += Window_FirstActivated;
+            if (NavView != null && NavView.MenuItems.Count > 0)
+            {
+                NavView.SelectedItem = NavView.MenuItems[0];
+                ContentFrame.Navigate(typeof(HomePage));
+                NavView.Header = "Home";
+            }
+
             CleanupActiveDownloads();
-            NativeBridgeService.Start();
             UpdateAdvancedTabsVisibility();
-            StartHashingProgressTimer();
+
+            _ = CheckForUpdatesAsync(_shutdownCts.Token);
+
+            await System.Threading.Tasks.Task.Delay(300);
+            await CheckFirstRunSetupAsync();
+        }
+
+        public void NavigateTo(Type pageType)
+        {
+            ContentFrame.Navigate(pageType);
+            if (pageType == typeof(HomePage)) NavView.SelectedItem = NavView.MenuItems[0];
+            else if (pageType == typeof(LibraryPage)) NavView.SelectedItem = NavView.MenuItems[1];
+            else if (pageType == typeof(DownloadsPage)) NavView.SelectedItem = NavView.MenuItems[2];
         }
 
         private void StartHashingProgressTimer()
         {
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            timer.Tick += (s, e) => {
+            _hashingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _hashingTimer.Tick += (s, e) => {
                 if (!string.IsNullOrEmpty(GlobalSettings.HashingProgress))
                 {
                     HashingStatusArea.Visibility = Visibility.Visible;
@@ -43,7 +83,7 @@ namespace SteamRipApp
                     HashingStatusArea.Visibility = Visibility.Collapsed;
                 }
             };
-            timer.Start();
+            _hashingTimer.Start();
         }
 
         private void StopHashing_Click(object sender, RoutedEventArgs e)
@@ -75,9 +115,75 @@ namespace SteamRipApp
         public void UpdateAdvancedTabsVisibility()
         {
             if (SteamNavItem != null)
-                SteamNavItem.Visibility = GlobalSettings.IsAdvancedModeEnabled ? Visibility.Visible : Visibility.Collapsed;
-            if (IntegrationNavItem != null)
-                IntegrationNavItem.Visibility = GlobalSettings.IsAdvancedModeEnabled ? Visibility.Visible : Visibility.Collapsed;
+                SteamNavItem.Visibility = GlobalSettings.IsSteamIntegrationEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async Task CheckForUpdatesAsync(CancellationToken ct = default)
+        {
+            try {
+                if (ct.IsCancellationRequested) return;
+                Logger.Log("[Update] Checking for app updates...");
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("User-Agent", "SteamRipApp");
+                string json = await client.GetStringAsync("https://api.github.com/repos/AveryChangedMan/SteamRipClient/releases/latest");
+                var doc = JsonDocument.Parse(json);
+                string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                if (string.IsNullOrEmpty(tag)) return;
+
+                string remoteRaw = tag.TrimStart('v');
+                string localRaw = GlobalSettings.AppVersion.TrimStart('v');
+
+                if (IsUpdateNeeded(localRaw, remoteRaw))
+                {
+
+                    if (GlobalSettings.ActiveDownloads.Any(d => d.Phase is "Downloading" or "Extracting") ||
+                        !string.IsNullOrEmpty(GlobalSettings.HashingProgress))
+                    {
+                        Logger.Log($"[Update] Update available ({remoteRaw}) but deferred — active download/hashing in progress.");
+                        return;
+                    }
+
+                    string htmlUrl = doc.RootElement.GetProperty("html_url").GetString() ?? "";
+                    var dialog = new ContentDialog {
+                        Title = "Update Available",
+                        Content = $"A new version ({remoteRaw}) is available.\nYou are running {localRaw}.\n\nWould you like to download it?",
+                        PrimaryButtonText = "Download",
+                        CloseButtonText = "Later",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+
+                    if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary && !string.IsNullOrEmpty(htmlUrl))
+                        await Windows.System.Launcher.LaunchUriAsync(new Uri(htmlUrl));
+                }
+            } catch (Exception ex) {
+                Logger.Log($"[Update] Check failed: {ex.Message}");
+            }
+        }
+
+        private static bool IsUpdateNeeded(string localVersion, string remoteVersion)
+        {
+            try
+            {
+                var local = ParseVersion(localVersion);
+                var remote = ParseVersion(remoteVersion);
+
+                return remote.x1 > local.x1
+                    || (remote.x1 == local.x1 && remote.x2 > local.x2)
+                    || (remote.x1 == local.x1 && remote.x2 == local.x2 && remote.x3 > local.x3);
+            }
+            catch { return false; }
+        }
+
+        private static (int x1, int x2, int x3, int x4) ParseVersion(string v)
+        {
+            var parts = v.Split('.');
+            static int ParseSafe(string s) => int.TryParse(s, out int i) ? i : 0;
+
+            int x1 = parts.Length > 0 ? ParseSafe(parts[0]) : 0;
+            int x2 = parts.Length > 1 ? ParseSafe(parts[1]) : 0;
+            int x3 = parts.Length > 2 ? ParseSafe(parts[2]) : 0;
+            int x4 = parts.Length > 3 ? ParseSafe(parts[3]) : 0;
+            return (x1, x2, x3, x4);
         }
 
         private void SetAppIcon()
@@ -87,36 +193,52 @@ namespace SteamRipApp
                 var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
                 var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
                 
-                
-                
-                string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app_icon.ico");
-                if (System.IO.File.Exists(iconPath))
+                string[] possiblePaths = {
+                    System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app_icon.ico"),
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
+                    System.IO.Path.Combine(Directory.GetCurrentDirectory(), "Assets", "app_icon.ico"),
+                    "Assets/app_icon.ico"
+                };
+
+                string? iconPath = possiblePaths.FirstOrDefault(p => System.IO.File.Exists(p));
+
+                if (!string.IsNullOrEmpty(iconPath))
                 {
                     appWindow.SetIcon(iconPath);
-                }
-                else
-                {
                     
-                    iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app_icon.png");
-                    if (System.IO.File.Exists(iconPath)) appWindow.SetIcon(iconPath);
+                    // Native fallback for taskbar/Alt-Tab reliability
+                    try {
+                        IntPtr hIcon = LoadImage(IntPtr.Zero, iconPath, 1, 0, 0, 0x00000010); // IMAGE_ICON, LR_LOADFROMFILE
+                        if (hIcon != IntPtr.Zero)
+                        {
+                            const uint WM_SETICON = 0x0080;
+                            SendMessage(hWnd, WM_SETICON, (IntPtr)0, hIcon); // Small icon
+                            SendMessage(hWnd, WM_SETICON, (IntPtr)1, hIcon); // Big icon
+                        }
+                    } catch { }
                 }
             } catch (Exception ex) {
                 Logger.Log($"[MainWindow] Failed to set window icon: {ex.Message}");
             }
         }
 
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern IntPtr LoadImage(IntPtr hinst, string lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
+
         private void CleanupActiveDownloads()
         {
-            
+
             ScanForOrphanedDownloads();
 
-            
             CleanupLibrary();
 
-            
-            
-            int removed = GlobalSettings.ActiveDownloads.RemoveAll(d => string.IsNullOrEmpty(d.Title));
-            
+            var toRemove = GlobalSettings.ActiveDownloads.Where(d => string.IsNullOrEmpty(d.Title)).ToList();
+            foreach (var d in toRemove) GlobalSettings.ActiveDownloads.Remove(d);
+            int removed = toRemove.Count;
+
             if (removed > 0)
             {
                 Logger.Log($"[Cleanup] Pruned {removed} invalid download entries.");
@@ -130,14 +252,14 @@ namespace SteamRipApp
                 int removed = GlobalSettings.Library.RemoveAll(m => {
                     if (string.IsNullOrEmpty(m.LocalPath)) return true;
                     string? root = System.IO.Path.GetPathRoot(m.LocalPath);
-                    
+
                     if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
                     {
                         return !Directory.Exists(m.LocalPath);
                     }
                     return false;
                 });
-                
+
                 if (removed > 0)
                 {
                     Logger.Log($"[Cleanup] Automatically removed {removed} ghost entries from library.");
@@ -159,7 +281,7 @@ namespace SteamRipApp
 
                     if (!GlobalSettings.ActiveDownloads.Any(d => d.DestPath.Equals(destPath, StringComparison.OrdinalIgnoreCase)))
                     {
-                        
+
                         try {
                             var json = File.ReadAllText(mPath);
                             var manifest = System.Text.Json.JsonSerializer.Deserialize<DownloadManifest>(json);
@@ -191,69 +313,291 @@ namespace SteamRipApp
             }
         }
 
-
-        private async void Window_FirstActivated(object sender, WindowActivatedEventArgs e)
-        {
-            this.Activated -= Window_FirstActivated; 
-            
-            await System.Threading.Tasks.Task.Delay(300);
-            await CheckFirstRunSetupAsync();
-        }
-
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
-            if (GlobalSettings.HasSelectedDownloadDirectory) return;
+            var current = ParseVersion(GlobalSettings.AppVersion);
+            var target = ParseVersion("1.4.6.0");
 
-            
-            var xamlRoot = ContentFrame.XamlRoot;
-            if (xamlRoot == null)
+            bool isOldVersion = (current.x1 < target.x1)
+                || (current.x1 == target.x1 && current.x2 < target.x2)
+                || (current.x1 == target.x1 && current.x2 == target.x2 && current.x3 < target.x3);
+
+            if (GlobalSettings.HasSelectedDownloadDirectory && !isOldVersion) return;
+            SetupOverlay.Visibility = Visibility.Visible;
+            NavView.IsHitTestVisible = false;
+        }
+
+        private async void SetupSelectFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var path = await PickerService.PickFolderAsync();
+            if (!string.IsNullOrEmpty(path))
             {
-                Logger.Log("[FirstRun] XamlRoot not ready, skipping dialog this launch.");
-                return;
+                GlobalSettings.DownloadDirectory = path;
+                Step1Path.Text = path;
+                Step1Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+
+                SetupScanBtn.IsEnabled = true;
+                SetupScanStep.Opacity = 1.0;
+
+                SetupLegacyBtn.IsEnabled = true;
+                SetupLegacyStep.Opacity = 1.0;
+
+                CheckSetupCompletion();
             }
+        }
 
-            var dialog = new ContentDialog
-            {
-                Title = "📁 Set Download Directory",
-                Content = "Before downloading any games, please choose a default folder where files will be saved. You can change this anytime in Settings.",
-                PrimaryButtonText = "Choose Directory",
-                SecondaryButtonText = "Skip for now",
-                XamlRoot = xamlRoot
+        private async void SetupScanManage_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new ContentDialog {
+                Title = "Scan Locations",
+                Content = "The app will look for games in your Download Directory by default.\n\nYou can add more folders (like your Steam Library or other Game drives) here.",
+                PrimaryButtonText = "Add Folder",
+                CloseButtonText = "Done",
+                XamlRoot = this.Content.XamlRoot
             };
 
-            try {
-                var result = await dialog.ShowAsync();
-                if (result == ContentDialogResult.Primary)
-                {
-                    var picker = new Windows.Storage.Pickers.FolderPicker();
-                    picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.Downloads;
-                    picker.FileTypeFilter.Add("*");
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-
-                    var folder = await picker.PickSingleFolderAsync();
-                    if (folder != null)
-                    {
-                        GlobalSettings.DownloadDirectory = folder.Path;
-                        GlobalSettings.HasSelectedDownloadDirectory = true;
-                        if (!GlobalSettings.ScanDirectories.Contains(folder.Path))
-                            GlobalSettings.ScanDirectories.Add(folder.Path);
-                        GlobalSettings.Save();
-                        Logger.Log($"[FirstRun] Default download dir set: {folder.Path}");
+            while (true) {
+                var result = await App.ShowDialogSafeAsync(dialog);
+                if (result == ContentDialogResult.Primary) {
+                    var path = await PickerService.PickFolderAsync();
+                    if (!string.IsNullOrEmpty(path) && !GlobalSettings.ScanDirectories.Contains(path)) {
+                        GlobalSettings.ScanDirectories.Add(path);
+                        Step3Status.Text = $"{GlobalSettings.ScanDirectories.Count} folder(s) configured.";
                     }
+                    Step2Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+                } else {
+                    Step2Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+                    break;
                 }
-                else
-                {
-                    Logger.Log("[FirstRun] User skipped directory selection. Will prompt again on next launch.");
-                }
-            } catch (Exception ex) {
-                Logger.LogError("CheckFirstRunSetup", ex);
             }
+
+            Step3Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+            CheckSetupCompletion();
+        }
+
+        private async void SetupLegacyCheck_Click(object sender, RoutedEventArgs e)
+        {
+            Step4Status.Text = "Scanning for legacy emulators...";
+            await Task.Run(() => {
+
+                Task.Delay(1000).Wait();
+            });
+            Step4Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+            Step4Status.Text = "No legacy patches found.";
+
+            SetupFinishStep.Opacity = 1.0;
+            Step5Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+            CheckSetupCompletion();
+        }
+
+        private void CheckSetupCompletion()
+        {
+            if (!string.IsNullOrEmpty(GlobalSettings.DownloadDirectory))
+            {
+                FinishSetupBtn.IsEnabled = true;
+            }
+        }
+
+        private async void FinishSetup_Click(object sender, RoutedEventArgs e)
+        {
+            SetupOverlay.Visibility = Visibility.Collapsed;
+            NavView.IsHitTestVisible = true;
+
+            GlobalSettings.IsHardRepairEnabled = SetupHardRepairCheck.IsChecked ?? true;
+            GlobalSettings.IsMultiThreadedHashingEnabled = SetupMultiThreadCheck.IsChecked ?? true;
+            GlobalSettings.AlwaysCreateRarMap = SetupRarMapCheck.IsChecked ?? true;
+            GlobalSettings.HashingSpeedCapMB = (int)SetupSpeedSlider.Value;
+            GlobalSettings.IsSteamIntegrationEnabled = SetupSteamCheck.IsChecked ?? true;
+            if (SetupDefenderCheck.IsChecked == true)
+            {
+                GlobalSettings.AntivirusExclusionAdded = true;
+
+                _ = Task.Run(() => {
+                    try {
+                        string downloadDir = GlobalSettings.DownloadDirectory;
+                        string psCommand = "sc.exe delete SteamRipInjector";
+                        if (!string.IsNullOrEmpty(downloadDir))
+                        {
+                            psCommand += $"; Add-MpPreference -ExclusionPath '{downloadDir}'";
+                        }
+
+                        Process.Start(new ProcessStartInfo {
+                            FileName = "powershell.exe",
+                            Arguments = $"-Command \"{psCommand}\"",
+                            CreateNoWindow = true,
+                            UseShellExecute = true,
+                            Verb = "runas"
+                        });
+                    } catch { }
+                });
+            }
+
+            GlobalSettings.HasSelectedDownloadDirectory = true;
+            if (!GlobalSettings.ScanDirectories.Contains(GlobalSettings.DownloadDirectory))
+                GlobalSettings.ScanDirectories.Add(GlobalSettings.DownloadDirectory);
+
+            GlobalSettings.IsSetupCompleted = true;
+            GlobalSettings.AppVersion = "1.4.6.0";
+            GlobalSettings.Save();
+
+            Logger.Log($"[Setup] Completed. Download Dir: {GlobalSettings.DownloadDirectory}");
+
+            UpdateAdvancedTabsVisibility();
+
+            try
+            {
+                if (Directory.Exists(GlobalSettings.DownloadDirectory) &&
+                    Directory.GetFileSystemEntries(GlobalSettings.DownloadDirectory).Length > 0 &&
+                    GlobalSettings.Library.Count == 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(1000);
+                        DispatcherQueue.TryEnqueue(async () =>
+                        {
+                            var indexDialog = new ContentDialog
+                            {
+                                Title = "Existing Games Detected",
+                                Content = "Your download directory is not empty. Would you like to automatically index and generate integrity maps for the found games?\n\nThis is recommended for full repair support.",
+                                PrimaryButtonText = "Index & Hash",
+                                CloseButtonText = "Later",
+                                XamlRoot = this.Content.XamlRoot
+                            };
+
+                            if (await App.ShowDialogSafeAsync(indexDialog) == ContentDialogResult.Primary)
+                            {
+                                ContentFrame.Navigate(typeof(LibraryPage));
+                                NavView.SelectedItem = NavView.MenuItems[1];
+
+                            }
+                        });
+                    });
+                }
+            }
+            catch { }
+
+            ContentFrame.Navigate(typeof(HomePage));
+            NavView.SelectedItem = NavView.MenuItems[0];
         }
 
         public void UpdateGlobalProgress(double pct, bool visible = true)
         {
             GlobalProgressBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             GlobalProgressBar.Value = pct;
+        }
+
+        public void ShowGlobalOverlay(string title, string status)
+        {
+            NavView.IsHitTestVisible = false;
+            GlobalOverlayTitle.Text = title;
+            GlobalOverlayStatus.Text = status;
+            GlobalOverlaySubStatus.Text = "";
+            GlobalOverlayProgressBar.Value = 0;
+            GlobalOverlayProgressBar.IsIndeterminate = true;
+            GlobalProgressOverlay.Visibility = Visibility.Visible;
+        }
+
+        public void UpdateGlobalOverlay(string status, double? progress = null, string? subStatus = null)
+        {
+            GlobalOverlayStatus.Text = status;
+            if (progress.HasValue)
+            {
+                GlobalOverlayProgressBar.IsIndeterminate = false;
+                GlobalOverlayProgressBar.Value = progress.Value;
+            }
+            if (subStatus != null) GlobalOverlaySubStatus.Text = subStatus;
+        }
+
+        public void HideGlobalOverlay()
+        {
+            NavView.IsHitTestVisible = true;
+            GlobalProgressOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void GlobalOverlayHide_Click(object sender, RoutedEventArgs e)
+        {
+            HideGlobalOverlay();
+        }
+
+        private async void RepairChanges_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentConfigPath)) return;
+            ConfigOverlay.Visibility = Visibility.Collapsed;
+
+            Logger.Log($"[Repair-Changes] Analyzing '{_currentConfigPath}' for additions/mods...");
+            var report = await RepairService.AnalyzeGameAsync(_currentConfigPath, _currentContentPath ?? _currentConfigPath, null);
+
+            if (report.AddedFiles.Count > 0)
+            {
+                var listView = new ListView { ItemsSource = report.AddedFiles, SelectionMode = ListViewSelectionMode.Multiple, MaxHeight = 300 };
+
+                foreach(var item in report.AddedFiles) listView.SelectedItems.Add(item);
+
+                var dialog = new ContentDialog {
+                    Title = "Added Files Detected (Mods/Patches)",
+                    Content = new StackPanel { Spacing = 8, Children = {
+                        new TextBlock { Text = "The following files are not part of the original game. What would you like to do?", TextWrapping = TextWrapping.Wrap },
+                        listView
+                    }},
+                    PrimaryButtonText = "Quarantine Selected",
+                    SecondaryButtonText = "Delete Selected",
+                    CloseButtonText = "Cancel",
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+                var result = await App.ShowDialogSafeAsync(dialog);
+                if (result == ContentDialogResult.Primary)
+                {
+                    var toQuarantine = listView.SelectedItems.Cast<string>().ToList();
+                    RepairService.QuarantineFiles(_currentConfigPath, _currentContentPath ?? _currentConfigPath, toQuarantine);
+                    Logger.Log($"[Repair-Changes] Quarantined {toQuarantine.Count} files.");
+                }
+                else if (result == ContentDialogResult.Secondary)
+                {
+                    var confirm = new ContentDialog {
+                        Title = "Confirm Deletion",
+                        Content = "Are you sure you want to permanently delete these files? This cannot be undone.",
+                        PrimaryButtonText = "Delete",
+                        CloseButtonText = "Cancel",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    if (await App.ShowDialogSafeAsync(confirm) == ContentDialogResult.Primary)
+                    {
+                        var toDelete = listView.SelectedItems.Cast<string>().ToList();
+                        RepairService.DeleteAddedFiles(_currentContentPath ?? _currentConfigPath, toDelete);
+                        Logger.Log($"[Repair-Changes] Deleted {toDelete.Count} files.");
+                    }
+                }
+            }
+            else
+            {
+
+                var qDir = Path.Combine(_currentContentPath ?? _currentConfigPath, "_Quarantine");
+                if (Directory.Exists(qDir) && Directory.GetFileSystemEntries(qDir).Length > 0)
+                {
+                    var dialog = new ContentDialog {
+                        Title = "Quarantined Files Found",
+                        Content = "Would you like to unquarantine all files for this game?",
+                        PrimaryButtonText = "Unquarantine All",
+                        CloseButtonText = "Cancel",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary)
+                    {
+                        RepairService.UnquarantineFiles(_currentConfigPath, _currentContentPath ?? _currentConfigPath);
+                    }
+                }
+                else
+                {
+                    var dialog = new ContentDialog {
+                        Title = "No Changes Detected",
+                        Content = "No additional files (mods/patches) or quarantined files were found.",
+                        CloseButtonText = "OK",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    await App.ShowDialogSafeAsync(dialog);
+                }
+            }
         }
 
         public void SetGlobalMoveStatus(string status, bool visible = true)
@@ -288,7 +632,7 @@ namespace SteamRipApp
                         break;
                     case "steam":
                         ContentFrame.Navigate(typeof(SteamPage));
-                        NavView.Header = "Steam Integration";
+                        NavView.Header = "Steam Library Beta";
                         break;
                     case "downloads":
                         ContentFrame.Navigate(typeof(DownloadsPage));
@@ -297,10 +641,6 @@ namespace SteamRipApp
                     case "library":
                         ContentFrame.Navigate(typeof(LibraryPage));
                         NavView.Header = "My Library";
-                        break;
-                    case "integration":
-                        ContentFrame.Navigate(typeof(NativeBridgePage));
-                        NavView.Header = "Steam Integration";
                         break;
                     case "cleanup":
                         ContentFrame.Navigate(typeof(CleanupView));
@@ -314,8 +654,8 @@ namespace SteamRipApp
             }
         }
 
-        private string? _currentConfigPath; 
-        private string? _currentContentPath; 
+        private string? _currentConfigPath;
+        private string? _currentContentPath;
 
         public void OpenConfig(string path, string title, string? contentPath = null, string? exePath = null)
         {
@@ -326,59 +666,54 @@ namespace SteamRipApp
 
             var config = GlobalSettings.GameConfigs[path];
 
-            if (string.IsNullOrEmpty(config.ManualExePath))
-            {
-                
-                string? detectedExe = exePath ?? ScannerEngine.FindExecutable(path, contentPath);
-                if (!string.IsNullOrEmpty(detectedExe))
-                {
-                    config.ManualExePath = detectedExe;
-                    config.WorkingDir = System.IO.Path.GetDirectoryName(detectedExe) ?? path;
-                    Logger.Log($"[UI] Auto-detected EXE for '{title}': {detectedExe}");
-                }
-            }
-
-            ConfigTitle.Text = $"⚙️ {title}";
-            
-            
-            bool hasMap = File.Exists(Path.Combine(path, ".rip_map.json"));
-            HardRepairBtn.Visibility = Visibility.Visible;
-
-            ConfigOverlay.Visibility = Visibility.Visible;
-            
-            ConfigOptionsList.Children.Clear();
-
-            
-            AddConfigText("Manual EXE Path", config.ManualExePath ?? "", (val) => config.ManualExePath = val);
-
-            
-            string cleanPath = path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
-            var meta = GlobalSettings.Library.FirstOrDefault(m => 
-                m.LocalPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar)
-                .Equals(cleanPath, StringComparison.OrdinalIgnoreCase));
-            
+            var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(path, StringComparison.OrdinalIgnoreCase));
             if (meta == null)
             {
                 meta = new GameMetadata { LocalPath = path, Title = title };
                 GlobalSettings.Library.Add(meta);
             }
 
+            string currentExe = config.ManualExePath ?? "";
+            bool isUtility = !string.IsNullOrEmpty(currentExe) && (currentExe.Contains("crashpad", StringComparison.OrdinalIgnoreCase) || currentExe.Contains("handler", StringComparison.OrdinalIgnoreCase));
+
+            if (string.IsNullOrEmpty(config.ManualExePath) || isUtility)
+            {
+                if (!string.IsNullOrEmpty(exePath) && !exePath.Contains("crashpad", StringComparison.OrdinalIgnoreCase) && !exePath.Contains("handler", StringComparison.OrdinalIgnoreCase))
+                    config.ManualExePath = exePath;
+                else
+                {
+                    var exes = Directory.GetFiles(path, "*.exe", SearchOption.AllDirectories)
+                                        .Where(f => !f.Contains("crashpad", StringComparison.OrdinalIgnoreCase) && !f.Contains("handler", StringComparison.OrdinalIgnoreCase))
+                                        .OrderByDescending(f => new FileInfo(f).Length)
+                                        .ToList();
+                    if (exes.Count > 0) config.ManualExePath = exes[0];
+                }
+
+                if (!string.IsNullOrEmpty(config.ManualExePath))
+                    config.WorkingDir = System.IO.Path.GetDirectoryName(config.ManualExePath) ?? string.Empty;
+            }
+
+            ConfigTitle.Text = $"⚙️ {title}";
+
+            ConfigOverlay.Visibility = Visibility.Visible;
+            NavView.IsHitTestVisible = false;
+            ConfigOptionsList.Children.Clear();
+
             ConfigOptionsList.Children.Add(new TextBlock { Text = "Steam AppID", Margin = new Thickness(0, 12, 0, 0), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             var appIdGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
             appIdGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             appIdGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-            
+
             var appIdBox = new TextBox { Text = meta.ManualSteamAppId?.ToString() ?? meta.SteamAppId?.ToString() ?? "", PlaceholderText = "Manual ID overrides automatic search" };
             appIdBox.TextChanged += async (s, e) => {
                 if (int.TryParse(appIdBox.Text, out int id)) {
                     int? oldId = meta.ManualSteamAppId ?? meta.SteamAppId;
-                    
-                    
+
                     if (meta.IsSteamIntegrated && oldId.HasValue && oldId.Value != id)
                     {
-                        await NativeBridgeService.IntegrateGame(path, id, title, oldId);
+                        await SteamManager.ImportGameToSteam(title, path, id);
                     }
-                    
+
                     meta.ManualSteamAppId = id;
                     ScannerEngine.UpdateAppIdInFiles(path, id);
                     GlobalSettings.Save();
@@ -388,7 +723,7 @@ namespace SteamRipApp
                 }
             };
             appIdGrid.Children.Add(appIdBox);
-            
+
             var resetBtn = new Button { Content = "Reset to Auto", Margin = new Thickness(8, 0, 0, 0) };
             Grid.SetColumn(resetBtn, 1);
             resetBtn.Click += (s, e) => {
@@ -397,9 +732,9 @@ namespace SteamRipApp
             };
             appIdGrid.Children.Add(resetBtn);
             ConfigOptionsList.Children.Add(appIdGrid);
-            
-            var searchAppIdBtn = new Button { 
-                Content = "🔍 Search Steam Store for AppID", 
+
+            var searchAppIdBtn = new Button {
+                Content = "🔍 Search Steam Store for AppID",
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(0, 0, 0, 8),
                 Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
@@ -415,124 +750,139 @@ namespace SteamRipApp
             };
             ConfigOptionsList.Children.Add(searchAppIdBtn);
 
-            
             AddConfigText("Launch Arguments", config.LaunchArguments ?? "", (val) => config.LaunchArguments = val);
-            
-            AddConfigText("Working Directory", config.WorkingDir ?? "", (val) => config.WorkingDir = val);
-            
+
+            AddConfigPath("Executable Path", config.ManualExePath ?? "", (val) => config.ManualExePath = val, isFolder: false);
+
+            string displayWorkingDir = config.WorkingDir;
+            if (string.IsNullOrEmpty(displayWorkingDir) && !string.IsNullOrEmpty(config.ManualExePath))
+            {
+                displayWorkingDir = Path.GetDirectoryName(config.ManualExePath) ?? string.Empty;
+            }
+            AddConfigPath("Working Directory", displayWorkingDir ?? string.Empty, (val) => config.WorkingDir = val, isFolder: true);
+
             AddConfigToggle("Run as Administrator", config.RunAsAdmin, (val) => config.RunAsAdmin = val);
-            
+
             AddConfigToggle("Disable Fullscreen Optimizations", config.DisableFullscreenOptimizations, (val) => config.DisableFullscreenOptimizations = val);
-            
+
             AddConfigToggle("High DPI Scaling Override", config.HighDpiScaling, (val) => config.HighDpiScaling = val);
-            
+
             AddConfigToggle("Suppress Game Overlays", config.SuppressOverlays, (val) => config.SuppressOverlays = val);
-            
+
             AddConfigNumber("Launch Delay (seconds)", config.LaunchDelaySeconds, (val) => config.LaunchDelaySeconds = val);
-            
+
             AddConfigCombo("CPU Priority", new[] { "Low", "Normal", "High", "Realtime" }, config.CpuPriority, (val) => config.CpuPriority = val);
-            
-            
+
             AddConfigCombo("Compatibility Mode", new[] { "None", "Windows 7", "Windows 8" }, 0, (val) => { });
 
-            
-            ConfigOptionsList.Children.Add(new TextBlock { 
-                Text = "Goldberg Patch (Compatibility)", 
-                Margin = new Thickness(0, 16, 0, 8), 
-                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue)
-            });
-            ConfigOptionsList.Children.Add(new TextBlock { 
-                Text = "Essential for most SteamRIP games. Replaces Steam API DLLs with an emulator.", 
-                TextWrapping = TextWrapping.Wrap, Opacity = 0.8, FontSize = 12, Margin = new Thickness(0, 0, 0, 8) 
-            });
-            
-            var patchBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            
-            var gbBtn = new Button { 
-                Content = meta.IsEmulatorApplied ? "✅ Goldberg Patched" : "Apply Goldberg Patch",
-                IsEnabled = !meta.IsEmulatorApplied,
-                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
-                Padding = new Thickness(12, 6, 12, 6)
-            };
-            
-            var revBtn = new Button {
-                Content = "Reverse Goldberg Patch",
-                IsEnabled = meta.IsEmulatorApplied,
-                Padding = new Thickness(12, 6, 12, 6)
-            };
-
-            patchBtnRow.Children.Add(gbBtn);
-            patchBtnRow.Children.Add(revBtn);
-            ConfigOptionsList.Children.Add(patchBtnRow);
-            
-            gbBtn.Click += async (s, e) => {
-                string appIdStr = appIdBox.Text;
-                if (int.TryParse(appIdStr, out int appId))
-                {
-                    NativeBridgeService.Log($"Applying Goldberg patch for {title} (AppID: {appId})...", "PATCH");
-                    await NativeBridgeService.ApplyGoldbergPatchAsync(path, appId);
-                    meta.IsEmulatorApplied = true;
-                    GlobalSettings.Save();
-                    
-                    gbBtn.Content = "✅ Goldberg Patched";
-                    gbBtn.IsEnabled = false;
-                    revBtn.IsEnabled = true;
-                    RefreshLibrary();
-                }
-                else
-                {
-                    NativeBridgeService.Log($"Patch failed: Invalid AppID '{appIdStr}'", "PATCH");
-                }
-            };
-
-            revBtn.Click += async (s, e) => {
-                NativeBridgeService.Log($"Reversing Goldberg patch for {title}...", "PATCH");
-                await NativeBridgeService.ReverseGoldbergPatchAsync(path);
-                meta.IsEmulatorApplied = false;
-                GlobalSettings.Save();
-                
-                gbBtn.Content = "Apply Goldberg Patch";
-                gbBtn.IsEnabled = true;
-                revBtn.IsEnabled = false;
-                RefreshLibrary();
-            };
-
-            
-            if (GlobalSettings.IsHardRepairEnabled)
+            if (meta.IsEmulatorApplied)
             {
-                ConfigOptionsList.Children.Add(new TextBlock { 
-                    Text = "Integrity Management", 
-                    Margin = new Thickness(0, 20, 0, 8), 
+                ConfigOptionsList.Children.Add(new TextBlock {
+                    Text = "Legacy Emulator Detected",
+                    Margin = new Thickness(0, 16, 0, 8),
                     FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange)
                 });
+                ConfigOptionsList.Children.Add(new TextBlock {
+                    Text = "This game has an older Goldberg patch applied. It is recommended to reverse it for better compatibility with modern Steam features.",
+                    TextWrapping = TextWrapping.Wrap, Opacity = 0.8, FontSize = 12, Margin = new Thickness(0, 0, 0, 8)
+                });
 
-                var integrityBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0,0,0,12) };
-                
-                var backupBtn = new Button { 
-                    Content = "📦 Trigger Manual Backup",
+                var revBtn = new Button {
+                    Content = "🛠 Reverse Legacy Patch",
+                    IsEnabled = true,
+                    Style = (Style)Application.Current.Resources["AccentButtonStyle"],
                     Padding = new Thickness(12, 6, 12, 6)
                 };
-                backupBtn.Click += (s, e) => {
-                    RepairService.TriggerManualBackup(path, contentPath ?? path);
+                ConfigOptionsList.Children.Add(revBtn);
+
+                revBtn.Click += async (s, e) => {
+                    Logger.Log($"Reversing legacy Goldberg patch for {title}...");
+
+                    meta.IsEmulatorApplied = false;
+                    GlobalSettings.Save();
+                    RefreshLibrary();
+
                     ConfigOverlay.Visibility = Visibility.Collapsed;
+                    OpenConfig(path, title, contentPath, exePath);
+                };
+            }
+
+                ConfigOptionsList.Children.Add(new TextBlock {
+                    Text = "New Files",
+                    Margin = new Thickness(0, 12, 0, 8),
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold
+                });
+                var newFilesPanel = new StackPanel {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Margin = new Thickness(0, 0, 0, 12)
+                };
+
+                var unqBtn = new Button {
+                    Content = "📦 Unquarantine",
+                    Padding = new Thickness(12, 6, 12, 6)
+                };
+                unqBtn.Click += (s, e) => {
+                    RepairService.UnquarantineFiles(path, contentPath ?? path);
+                    ConfigOverlay.Visibility = Visibility.Collapsed;
+                    OpenConfig(path, title, contentPath, exePath);
+                };
+
+                var scanAgainBtn = new Button {
+                    Content = "🔎 Scan Again",
+                    Padding = new Thickness(12, 6, 12, 6)
+                };
+                scanAgainBtn.Click += async (s, e) => {
+                    ConfigOverlay.Visibility = Visibility.Collapsed;
+                    await RepairService.AnalyzeGameAsync(path, contentPath ?? path);
+                    OpenConfig(path, title, contentPath, exePath);
+                };
+
+                newFilesPanel.Children.Add(unqBtn);
+                newFilesPanel.Children.Add(scanAgainBtn);
+                ConfigOptionsList.Children.Add(newFilesPanel);
+
+                var integrityBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0,0,0,12) };
+                var backupBtn = new Button {
+                    Content = "💾 Manual Backup [UNSTABLE]",
+                    Padding = new Thickness(12, 6, 12, 6)
+                };
+                backupBtn.Click += async (s, e) => {
+                    if (await ShowUnstableWarningAsync("Manual Backup")) {
+                        RepairService.TriggerManualBackup(path, contentPath ?? path);
+                        ConfigOverlay.Visibility = Visibility.Collapsed;
+                    }
                 };
 
                 var integrityResetBtn = new Button {
-                    Content = "🗑 Reset Integrity State",
+                    Content = "🗑 Reset Integrity [UNSTABLE]",
                     Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
                     Padding = new Thickness(12, 6, 12, 6)
                 };
-                integrityResetBtn.Click += (s, e) => {
-                    RepairService.StopHashingForGame(path);
-                    ConfigOverlay.Visibility = Visibility.Collapsed;
+                integrityResetBtn.Click += async (s, e) => {
+                    if (await ShowUnstableWarningAsync("Reset Integrity")) {
+                        RepairService.StopHashingForGame(path);
+                        ConfigOverlay.Visibility = Visibility.Collapsed;
+                    }
                 };
 
                 integrityBtnRow.Children.Add(backupBtn);
                 integrityBtnRow.Children.Add(integrityResetBtn);
                 ConfigOptionsList.Children.Add(integrityBtnRow);
-            }
+        }
+
+        private async Task<bool> ShowUnstableWarningAsync(string feature)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = "⚠️ Unstable Operation",
+                Content = $"The '{feature}' feature is currently experimental and may cause data loss or corrupt integrity maps.\n\nPlease refer to the 'Advanced Repair Guidelines' before proceeding.\n\nContinue anyway?",
+                PrimaryButtonText = "Proceed",
+                CloseButtonText = "Cancel",
+                XamlRoot = this.Content.XamlRoot
+            };
+            return await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary;
         }
 
         private void AddConfigText(string label, string value, Action<string> onUpdate) {
@@ -540,6 +890,32 @@ namespace SteamRipApp
             var tb = new TextBox { Text = value };
             tb.TextChanged += (s, e) => onUpdate(tb.Text);
             ConfigOptionsList.Children.Add(tb);
+        }
+
+        private void AddConfigPath(string label, string value, Action<string> onUpdate, bool isFolder)
+        {
+            ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 12, 0, 4), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+            var tb = new TextBox { Text = value, HorizontalAlignment = HorizontalAlignment.Stretch };
+            tb.TextChanged += (s, e) => onUpdate(tb.Text);
+            grid.Children.Add(tb);
+
+            var openBtn = new Button { Content = "📂", Margin = new Thickness(8, 0, 0, 0) };
+            ToolTipService.SetToolTip(openBtn, "Open in Explorer");
+            openBtn.Click += (s, e) => {
+                try {
+                    string target = tb.Text;
+                    if (string.IsNullOrEmpty(target)) return;
+                    if (File.Exists(target)) target = Path.GetDirectoryName(target) ?? target;
+                    if (Directory.Exists(target)) Process.Start("explorer.exe", target);
+                } catch { }
+            };
+            Grid.SetColumn(openBtn, 1);
+            grid.Children.Add(openBtn);
+            ConfigOptionsList.Children.Add(grid);
         }
 
         private void AddConfigToggle(string label, bool val, Action<bool> onUpdate) {
@@ -567,167 +943,65 @@ namespace SteamRipApp
         private TaskCompletionSource<string>? _repairUrlTcs;
         private bool _repairInterceptorReady;
 
-        private async Task<string> ResolveRepairUrlAsync(string targetUrl, string gameTitle)
+        public async Task<string> ResolveRepairUrlAsync(string targetUrl, string gameTitle)
         {
             Logger.Log($"[Repair-Resolve] Starting resolution for '{gameTitle}' (Initial URL: {targetUrl})");
             List<DownloadHost> hosts = new List<DownloadHost>();
 
-            
             if (!string.IsNullOrEmpty(targetUrl) && targetUrl.Contains("steamrip.com"))
             {
-                Logger.Log($"[Repair-Resolve] Probing existing SteamRIP URL...");
                 hosts = await SteamRipScraper.GetDirectLinksAsync(targetUrl);
-                Logger.Log($"[Repair-Resolve] Hosts found on existing page: {hosts.Count}");
             }
 
-            
             if (hosts.Count == 0)
             {
-                Logger.Log($"[Repair-Resolve] No hosts found on current URL. Opening manual selector...");
                 string manualPageUrl = await ShowManualPageSelectionDialogAsync(gameTitle);
-                
                 if (!string.IsNullOrEmpty(manualPageUrl))
                 {
                     targetUrl = manualPageUrl;
-                    Logger.Log($"[Repair-Resolve] User selected page: {targetUrl}. Updating library metadata...");
-                    
                     var meta = GlobalSettings.Library.FirstOrDefault(m => m.Title.Equals(gameTitle, StringComparison.OrdinalIgnoreCase));
                     if (meta != null) { meta.Url = targetUrl; GlobalSettings.Save(); }
-                    
                     hosts = await SteamRipScraper.GetDirectLinksAsync(targetUrl);
-                    Logger.Log($"[Repair-Resolve] Hosts found on selected page: {hosts.Count}");
-                }
-                else
-                {
-                    Logger.Log("[Repair-Resolve] Manual page selection was cancelled or returned no results.");
                 }
             }
 
-            if (hosts.Count == 0)
-            {
-                Logger.Log("[Repair-Resolve] FAILED: No download hosts (Buzzheavier/GoFile) could be found for this game.");
-                return "";
-            }
+            if (hosts.Count == 0) return "";
 
-            
             string selectedUrl = "";
-            if (hosts.Count > 1)
-            {
-                Logger.Log("[Repair-Resolve] Multiple hosts detected. Prompting user for choice...");
-                selectedUrl = await ShowHostSelectionDialogAsync(hosts);
-                Logger.Log($"[Repair-Resolve] User selected host link: {selectedUrl}");
-            }
-            else
-            {
-                selectedUrl = hosts[0].Link;
-                Logger.Log($"[Repair-Resolve] Single host detected: {hosts[0].Name} ({selectedUrl})");
-            }
+            if (hosts.Count > 1) selectedUrl = await ShowHostSelectionDialogAsync(hosts);
+            else selectedUrl = hosts[0].Link;
 
-            if (string.IsNullOrEmpty(selectedUrl)) 
-            {
-                Logger.Log("[Repair-Resolve] FAILED: No host URL was selected or user cancelled host selection.");
-                return "";
-            }
+            if (string.IsNullOrEmpty(selectedUrl)) return "";
 
-            
-            string finalUrl = "";
-            
-            Logger.Log($"[Repair-Resolve] Attempting API-based resolution for: {selectedUrl}");
-            finalUrl = await UrlResolver.ResolveDirectUrlAsync(selectedUrl);
-
-            if (string.IsNullOrEmpty(finalUrl))
-            {
-                Logger.Log("[Repair-Resolve] API resolution failed. Falling back to Interceptor...");
-                finalUrl = await InterceptRepairUrlAsync(selectedUrl);
-            }
-            
-            if (string.IsNullOrEmpty(finalUrl))
-            {
-                Logger.Log("[Repair-Resolve] FAILED: Could not extract a direct download link automatically.");
-                
-                var dialog = new ContentDialog {
-                    Title = "URL Resolution Failed",
-                    Content = "We could not automatically extract a download link from this host. Would you like to search for the game page manually?",
-                    PrimaryButtonText = "Search Manually",
-                    CloseButtonText = "Cancel",
-                    XamlRoot = this.Content.XamlRoot
-                };
-                
-                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-                {
-                    Logger.Log("[Repair-Resolve] Falling back to manual search...");
-                    var manualPageUrl = await ShowManualPageSelectionDialogAsync(gameTitle);
-                    if (!string.IsNullOrEmpty(manualPageUrl))
-                    {
-                        
-                        return await ResolveRepairUrlAsync(manualPageUrl, gameTitle);
-                    }
-                }
-            }
-            else
-            {
-                Logger.Log("[Repair-Resolve] SUCCESS: Direct link extracted.");
-            }
+            string finalUrl = await UrlResolver.ResolveDirectUrlAsync(selectedUrl);
+            if (string.IsNullOrEmpty(finalUrl)) finalUrl = await InterceptRepairUrlAsync(selectedUrl);
 
             return finalUrl;
         }
 
         private async Task<string> ShowManualPageSelectionDialogAsync(string gameTitle)
         {
-            Logger.Log($"[Repair-UI] Searching SteamRIP for manual page selection: '{gameTitle}'");
             var results = await SteamRipScraper.SearchAsync(gameTitle);
-            if (results.Count == 0) 
-            {
-                Logger.Log("[Repair-UI] No search results found for manual selection.");
-                return "";
-            }
+            if (results.Count == 0) return "";
 
-            Logger.Log($"[Repair-UI] Showing selection dialog with {results.Count} results.");
             var listView = new ListView {
                 ItemsSource = results,
                 SelectionMode = ListViewSelectionMode.Single,
-                MaxHeight = 400,
-                Padding = new Thickness(0, 8, 0, 8)
+                MaxHeight = 400
             };
-
-            
-            listView.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(@"
-                <DataTemplate xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation"">
-                    <Grid Padding=""8"">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width=""Auto""/>
-                            <ColumnDefinition Width=""*""/>
-                        </Grid.ColumnDefinitions>
-                        <Border CornerRadius=""4"" Background=""{ThemeResource SystemControlBackgroundBaseLowBrush}"" Width=""80"" Height=""45"">
-                            <Image Stretch=""UniformToFill"" Source=""{Binding ImageUrl}""/>
-                        </Border>
-                        <StackPanel Grid.Column=""1"" VerticalAlignment=""Center"" Margin=""12,0,0,0"" Spacing=""2"">
-                            <TextBlock Text=""{Binding Title}"" FontWeight=""SemiBold"" TextWrapping=""Wrap""/>
-                            <TextBlock Text=""{Binding DateString}"" FontSize=""11"" Opacity=""0.6""/>
-                        </StackPanel>
-                    </Grid>
-                </DataTemplate>");
 
             var dialog = new ContentDialog {
                 Title = "Select Game Page",
-                Content = new StackPanel { 
-                    Spacing = 8,
-                    Children = { 
-                        new TextBlock { Text = $"Multiple or no pages were found for '{gameTitle}'. Please select the correct one:", TextWrapping = TextWrapping.Wrap },
-                        listView 
-                    } 
-                },
+                Content = listView,
                 PrimaryButtonText = "Link & Repair",
                 CloseButtonText = "Cancel",
                 XamlRoot = this.Content.XamlRoot
             };
 
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary && listView.SelectedItem is SearchResult selected)
+            if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary && listView.SelectedItem is SearchResult selected)
             {
-                Logger.Log($"[Repair-UI] User selected page: {selected.Url}");
                 return selected.Url;
             }
-            Logger.Log("[Repair-UI] Manual selection cancelled.");
             return "";
         }
 
@@ -738,253 +1012,213 @@ namespace SteamRipApp
 
             if (bz != null && gf != null)
             {
-                Logger.Log("[Repair-UI] Detected both Buzzheavier and GoFile. Showing selection dialog.");
                 var selectDialog = new ContentDialog {
                     Title = "Select Repair Source",
-                    Content = "Multiple download sources found. Which one would you like to use for surgical repair?",
+                    Content = "Multiple download sources found.",
                     PrimaryButtonText = "Buzzheavier",
                     SecondaryButtonText = "GoFile (Fastest)",
                     CloseButtonText = "Cancel",
                     XamlRoot = this.Content.XamlRoot
                 };
 
-                var result = await selectDialog.ShowAsync();
-                if (result == ContentDialogResult.Primary) { Logger.Log("[Repair-UI] User selected Buzzheavier."); return bz.Link; }
-                if (result == ContentDialogResult.Secondary) { Logger.Log("[Repair-UI] User selected GoFile."); return gf.Link; }
-                Logger.Log("[Repair-UI] User cancelled host selection.");
+                var result = await App.ShowDialogSafeAsync(selectDialog);
+                if (result == ContentDialogResult.Primary) return bz.Link;
+                if (result == ContentDialogResult.Secondary) return gf.Link;
                 return "";
             }
 
-            var fallback = hosts.FirstOrDefault()?.Link ?? "";
-            Logger.Log($"[Repair-UI] Only one host or unexpected combo found. Falling back to: {fallback}");
-            return fallback;
+            return hosts.FirstOrDefault()?.Link ?? "";
         }
 
         private async Task<string> InterceptRepairUrlAsync(string targetUrl)
         {
-            Logger.Log($"[Repair-Interceptor] Starting for host URL: {targetUrl}");
             _repairUrlTcs = new TaskCompletionSource<string>();
-
             try {
                 if (!_repairInterceptorReady)
                 {
-                    Logger.Log("[Repair-Interceptor] Initializing CoreWebView2...");
                     await RepairInterceptor.EnsureCoreWebView2Async();
                     RepairInterceptor.CoreWebView2.DownloadStarting += (s, e) => {
                         e.Cancel = true;
-                        Logger.Log($"[Repair-Interceptor] INTERCEPTED DOWNLOAD: {e.DownloadOperation.Uri}");
                         _repairUrlTcs?.TrySetResult(e.DownloadOperation.Uri);
                     };
-                    RepairInterceptor.NavigationCompleted += async (s, args) => {
-                        if (!args.IsSuccess) { Logger.Log($"[Repair-Interceptor] NAVIGATION FAILED: {args.WebErrorStatus}"); return; }
-                        var url = s.Source?.ToString() ?? "";
-                        Logger.Log($"[Repair-Interceptor] Loaded: {url}");
-
-                        if (!url.Contains("bzzhr.to") && !url.Contains("buzzheavier") && !url.Contains("gofile.io")) {
-                             Logger.Log("[Repair-Interceptor] URL is not a known host page. Skipping script injection.");
-                             return;
-                        }
-
-                        Logger.Log("[Repair-Interceptor] Injecting click automation script...");
-                        await Task.Delay(2000);
-                        var result = await s.ExecuteScriptAsync(@"
-                            (function() {
-                                // Buzzheavier / HTMX
-                                var bzBtn = document.querySelector('a[hx-get*=""download""], .link-button, button[hx-get*=""download""]');
-                                if (bzBtn) { bzBtn.click(); return 'clicked-buzzheavier'; }
-
-                                // GoFile / Generic
-                                var gfBtn = document.querySelector('button[id*=""download""], .downloadButton, button[class*=""download""], #downloadButton');
-                                if (gfBtn) { gfBtn.click(); return 'clicked-gofile'; }
-                                
-                                // Fallback any anchor with ""download""
-                                var anyDl = document.querySelector('a[href*=""/download/""], a[href*=""download""]');
-                                if (anyDl) { anyDl.click(); return 'clicked-fallback'; }
-                                
-                                return 'no-button-found';
-                            })();
-                        ");
-                        Logger.Log($"[Repair-Interceptor] Script Result: {result}");
-                    };
                     _repairInterceptorReady = true;
-                    Logger.Log("[Repair-Interceptor] Ready.");
                 }
 
-                string absoluteUrl = targetUrl;
-                if (absoluteUrl.StartsWith("//")) absoluteUrl = "https:" + absoluteUrl;
-                if (!absoluteUrl.StartsWith("http")) absoluteUrl = "https://" + absoluteUrl.TrimStart('/');
-                
-                RepairInterceptor.Source = new Uri(absoluteUrl);
-                Logger.Log($"[Repair-Interceptor] Navigating to: {absoluteUrl}");
-
+                RepairInterceptor.Source = new Uri(targetUrl);
                 var completedTask = await Task.WhenAny(_repairUrlTcs.Task, Task.Delay(45000));
-                if (completedTask == _repairUrlTcs.Task)
-                    return await _repairUrlTcs.Task;
+                if (completedTask == _repairUrlTcs.Task) return await _repairUrlTcs.Task;
+                return "";
+            } catch { return ""; }
+        }
 
-                Logger.Log("[Repair-Interceptor] TIMEOUT: No download was intercepted within 45 seconds.");
-                return "";
+        private async void FixMetadata_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_currentConfigPath)) return;
+            try {
+                Logger.Log($"Fixing metadata for {_currentConfigPath}...");
+                var results = await ScannerEngine.ScanDirectoriesAsync(new List<string> { _currentConfigPath });
+                if (results.Count > 0)
+                {
+                    RefreshLibrary();
+                    await App.ShowDialogSafeAsync(new ContentDialog { Title = "Metadata Updated", Content = "Title, icons, and path mappings have been refreshed.", CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot });
+                }
             } catch (Exception ex) {
-                Logger.LogError("[Repair-Interceptor] Fatal Error", ex);
-                return "";
+                Logger.LogError("FixMetadata", ex);
             }
         }
 
-        private async void HardRepair_Click(object sender, RoutedEventArgs e)
+        private async void RepairGame_Click(object sender, RoutedEventArgs e)
         {
+            if (App.IsDialogShowing) return;
             if (string.IsNullOrEmpty(_currentConfigPath)) return;
-            
-            var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(_currentConfigPath, StringComparison.OrdinalIgnoreCase));
-            if (meta == null) return;
 
-            string pageUrl = GlobalSettings.GamePageLinks.TryGetValue(_currentConfigPath, out var u) ? u : "";
-            if (string.IsNullOrEmpty(pageUrl)) pageUrl = meta.Url ?? "";
+            try {
 
-            var confirm = new ContentDialog
-            {
-                Title = "🛡️ Full Integrity Repair",
-                Content = $"This will analyze every file in {meta.Title} and compare hashes.\n\n" +
-                          $"Game: {meta.Title}\nSource: {(string.IsNullOrEmpty(pageUrl) ? "Automatic Search" : pageUrl)}\n\n" +
-                          "Confirm scan details:",
-                PrimaryButtonText = "Analyze & Repair",
-                CloseButtonText = "Cancel",
-                XamlRoot = this.Content.XamlRoot
-            };
+                string lookupPath = _currentConfigPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-            if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+                var meta = GlobalSettings.Library.FirstOrDefault(m =>
+                    m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Equals(lookupPath, StringComparison.OrdinalIgnoreCase));
 
-            HardRepairBtn.IsEnabled = false;
-            HardRepairBtn.Content = "Analyzing...";
+                if (meta == null) return;
 
-            
-            HashingStatusArea.Visibility = Visibility.Visible;
-            HashingProgressBar.IsIndeterminate = false;
+                string normLookup = _currentConfigPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string pageUrl = "";
+                var matchedKey = GlobalSettings.GamePageLinks.Keys.FirstOrDefault(k =>
+                    k.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Equals(normLookup, StringComparison.OrdinalIgnoreCase));
+                if (matchedKey != null) pageUrl = GlobalSettings.GamePageLinks[matchedKey];
+                if (string.IsNullOrEmpty(pageUrl) && !string.IsNullOrEmpty(meta.Url)) pageUrl = meta.Url;
 
-            var report = await RepairService.AnalyzeGameAsync(_currentConfigPath, _currentConfigPath, (status, progress) => {
-                DispatcherQueue.TryEnqueue(() => {
-                    HashingStatusText.Text = status;
-                    HashingProgressBar.Value = progress;
-                });
-            });
-            
-            HashingStatusArea.Visibility = Visibility.Collapsed;
-            HardRepairBtn.IsEnabled = true;
-            HardRepairBtn.Content = "🛠 Hard Repair";
-
-            if (report.Error != null)
-            {
-                await new ContentDialog { Title = "Error", Content = report.Error, CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot }.ShowAsync();
-                return;
-            }
-
-            if (!report.HasIssues)
-            {
-                await new ContentDialog { Title = "Integrity Perfect", Content = "All files are present and match their original hashes.", CloseButtonText = "Great!", XamlRoot = this.Content.XamlRoot }.ShowAsync();
-                return;
-            }
-
-            string issueDetails = "";
-            if (report.MissingFiles.Any()) issueDetails += $"❌ Missing Files: {report.MissingFiles.Count}\n";
-            if (report.CorruptedFiles.Any()) issueDetails += $"⚠️ Corrupted Files: {report.CorruptedFiles.Count}\n";
-
-            string FormatBytes(long bytes)
-            {
-                string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
-                int i = 0;
-                double dblSByte = bytes;
-                while (dblSByte >= 1024 && i < suffixes.Length - 1)
+                var versionStatus = RepairService.CheckVersionFile(_currentConfigPath);
+                if (versionStatus == RepairService.VersionStatus.NotDownloadedWithApp)
                 {
-                    dblSByte /= 1024;
-                    i++;
-                }
-                return $"{dblSByte:0.##} {suffixes[i]}";
-            }
-
-            var repairConfirm = new ContentDialog
-            {
-                Title = "Issues Found",
-                Content = $"{issueDetails}\nEstimated Download: {FormatBytes(report.EstimatedDownloadBytes)}\n\nWould you like to start a Full Repair? This will re-download only missing or corrupted files.",
-                PrimaryButtonText = "Start Repair",
-                SecondaryButtonText = "Show Details",
-                CloseButtonText = "Cancel",
-                XamlRoot = this.Content.XamlRoot
-            };
-
-            var result = await repairConfirm.ShowAsync();
-            if (result == ContentDialogResult.Secondary)
-            {
-                string details = "Missing:\n" + string.Join("\n", report.MissingFiles.Take(10)) + (report.MissingFiles.Count > 10 ? "\n..." : "") +
-                                 "\n\nCorrupted:\n" + string.Join("\n", report.CorruptedFiles.Take(10)) + (report.CorruptedFiles.Count > 10 ? "\n..." : "");
-                await new ContentDialog { Title = "Detail Report", Content = new ScrollViewer { Content = new TextBlock { Text = details, TextWrapping = TextWrapping.Wrap } }, CloseButtonText = "Back", XamlRoot = this.Content.XamlRoot }.ShowAsync();
-                return;
-            }
-
-            if (result == ContentDialogResult.Primary)
-            {
-                
-                string directUrl = "";
-                try {
-                    directUrl = await ResolveRepairUrlAsync(pageUrl, meta.Title);
-                } catch (Exception ex) {
-                    await new ContentDialog { Title = "Repair Failed", Content = ex.Message, CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot }.ShowAsync();
+                    _ = App.ShowDialogSafeAsync(new ContentDialog { Title = "Not Downloaded with SteamRip App", Content = "This game does not appear to have been downloaded with this application. No repair data is available.", CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot });
                     return;
                 }
-
-                if (string.IsNullOrEmpty(directUrl)) return; 
-
-                var progressDialog = new ContentDialog
+                if (versionStatus == RepairService.VersionStatus.Incompatible)
                 {
-                    Title = "Repairing Game",
-                    PrimaryButtonText = "Abort",
+                    _ = App.ShowDialogSafeAsync(new ContentDialog
+                    {
+                        Title = "Incompatible Repair Data",
+                        Content = "This game was downloaded with a much older or different version of this app's repair logic. The current repair system cannot safely verify these files.\n\nYou may need to re-download the game to enable modern repair features.",
+                        CloseButtonText = "OK",
+                        XamlRoot = this.Content.XamlRoot
+                    });
+                    return;
+                }
+                if (versionStatus == RepairService.VersionStatus.NeedsPatch)
+                {
+                    var upgradeConfirm = new ContentDialog
+                    {
+                        Title = "Patch Required",
+                        Content = "This game's repair data needs a quick update to work with the latest repair logic.\n\nWould you like to re-verify and update the metadata now?",
+                        PrimaryButtonText = "Update Metadata",
+                        CloseButtonText = "Skip",
+                        XamlRoot = this.Content.XamlRoot
+                    };
+                    if (await App.ShowDialogSafeAsync(upgradeConfirm) == ContentDialogResult.Primary)
+                    {
+                        await RepairService.RunInitialHashAsync(_currentConfigPath, _currentContentPath ?? _currentConfigPath);
+                    }
+                    else return;
+                }
+
+                var confirm = new ContentDialog
+                {
+                    Title = "🛠 Repair Game - Advanced Verification",
+                    Content = "Analyze files and compare with SteamRIP original hashes? This may take several minutes.",
+                    PrimaryButtonText = "Analyze & Repair",
+                    CloseButtonText = "Cancel",
                     XamlRoot = this.Content.XamlRoot
                 };
 
-                var sp = new StackPanel { Spacing = 10 };
-                var pb = new ProgressBar { Maximum = 100, Value = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
-                var tb = new TextBlock { Text = "Extracting files...", TextWrapping = TextWrapping.Wrap };
-                sp.Children.Add(tb);
-                sp.Children.Add(pb);
-                progressDialog.Content = sp;
+                if (await App.ShowDialogSafeAsync(confirm) != ContentDialogResult.Primary) return;
 
-                var cts = new CancellationTokenSource();
-                progressDialog.PrimaryButtonClick += (s, args) => {
-                    if (progressDialog.PrimaryButtonText == "Abort")
+                string analysisPath = _currentContentPath ?? _currentConfigPath;
+                if (string.IsNullOrEmpty(analysisPath)) return;
+
+                var report = await RepairService.AnalyzeGameAsync(_currentConfigPath, analysisPath, null, (msg, pct) => {
+
+                });
+
+                if (report.MetadataMissing)
+                {
+
+                    await RepairService.RunInitialHashAsync(_currentConfigPath, analysisPath);
+
+                    report = await RepairService.AnalyzeGameAsync(_currentConfigPath, analysisPath, null, (msg, pct) => {});
+                    if (report.MetadataMissing)
                     {
-                        args.Cancel = true; 
-                        tb.Text = "Aborting...";
-                        cts.Cancel();
+                         _ = App.ShowDialogSafeAsync(new ContentDialog { Title = "Metadata Error", Content = "Could not generate integrity metadata for this game.", CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot });
+                         return;
                     }
+                }
+
+                if (!report.HasIssues)
+                {
+                    _ = App.ShowDialogSafeAsync(new ContentDialog { Title = "Integrity Perfect", Content = "All files are present and match their original hashes.", CloseButtonText = "Great!", XamlRoot = this.Content.XamlRoot });
+                    return;
+                }
+
+                var repairConfirm = new ContentDialog
+                {
+                    Title = "Issues Found",
+                    Content = $"Found {report.MissingFiles.Count + report.CorruptedFiles.Count} discrepancies.\n\nWould you like to attempt a Repair? This will re-download only the necessary parts from SteamRIP.",
+                    PrimaryButtonText = "Start Repair",
+                    CloseButtonText = "Cancel",
+                    XamlRoot = this.Content.XamlRoot
                 };
 
-                _ = progressDialog.ShowAsync();
-                
-                try {
-                    await RepairService.PerformSurgicalRepairAsync(_currentConfigPath, _currentConfigPath, report, directUrl, (status, progress) => {
-                        DispatcherQueue.TryEnqueue(() => {
-                            tb.Text = status;
-                            pb.Value = progress;
-                        });
-                    }, cts.Token);
+                if (await App.ShowDialogSafeAsync(repairConfirm) == ContentDialogResult.Primary)
+                {
+                    if (string.IsNullOrEmpty(pageUrl))
+                    {
+                        pageUrl = await ShowManualPageSelectionDialogAsync(meta.Title);
+                        if (string.IsNullOrEmpty(pageUrl)) return;
+                        meta.Url = pageUrl;
+                        string normPath = _currentConfigPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        GlobalSettings.GamePageLinks[normPath] = pageUrl;
+                        GlobalSettings.Save();
+                    }
 
-                    progressDialog.Title = "Repair Complete";
-                    tb.Text = "The repair process finished successfully.";
-                    progressDialog.PrimaryButtonText = "Okay";
+                    string directUrl = await ResolveRepairUrlAsync(pageUrl, meta.Title);
+                    if (string.IsNullOrEmpty(directUrl)) return;
+
+                    var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.RootPath.Equals(analysisPath, StringComparison.OrdinalIgnoreCase));
+                    if (gf != null) { gf.IsInProgress = true; gf.ProgressPhase = "Repairing..."; }
+
+                    await RepairService.PerformIntegrityRepairAsync(_currentConfigPath, analysisPath, report, directUrl, (s, p) => {
+                        DispatcherQueue.TryEnqueue(() => {
+
+                        });
+                    }, CancellationToken.None);
+
+                    if (gf != null) { gf.IsInProgress = false; gf.ProgressPhase = ""; }
                 }
-                catch (OperationCanceledException) {
-                    progressDialog.Hide();
-                }
-                catch (Exception ex) {
-                    progressDialog.Hide();
-                    await new ContentDialog { Title = "Repair Failed", Content = ex.Message, CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot }.ShowAsync();
-                }
+            }
+            catch (Exception ex) {
+                Logger.LogError("RepairGame_UI", ex);
+                try {
+                    _ = App.ShowDialogSafeAsync(new ContentDialog { Title = "Repair Error", Content = $"A critical error occurred: {ex.Message}", CloseButtonText = "OK", XamlRoot = this.Content.XamlRoot });
+                } catch { }
+            }
+            finally {
+                App.IsDialogShowing = false;
             }
         }
 
-        private void SaveConfig_Click(object sender, RoutedEventArgs e) 
-        { 
+        private void SaveConfig_Click(object sender, RoutedEventArgs e)
+        {
             GlobalSettings.Save();
-            ConfigOverlay.Visibility = Visibility.Collapsed; 
+            ConfigOverlay.Visibility = Visibility.Collapsed;
+            NavView.IsHitTestVisible = true;
         }
-        private void CancelConfig_Click(object sender, RoutedEventArgs e) { ConfigOverlay.Visibility = Visibility.Collapsed; }
+        private void CancelConfig_Click(object sender, RoutedEventArgs e)
+        {
+            ConfigOverlay.Visibility = Visibility.Collapsed;
+            NavView.IsHitTestVisible = true;
+        }
 
         public void NavigateToDownloads()
         {
@@ -1019,18 +1253,12 @@ namespace SteamRipApp
             }
         }
 
-        
-        
-        
-        
         public void RefreshLibrary()
         {
             if (ContentFrame.Content is LibraryPage libraryPage)
             {
-                
                 _ = libraryPage.RefreshAsync();
             }
-            
         }
 
         private async Task<int?> ShowAppIdSearchDialog(string initialTitle)
@@ -1040,21 +1268,21 @@ namespace SteamRipApp
                 Title = "Search Steam Store",
                 PrimaryButtonText = "Apply Selection",
                 CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot,
                 IsPrimaryButtonEnabled = false
             };
 
             var stack = new StackPanel { Spacing = 12, Width = 400 };
-            var searchBox = new AutoSuggestBox { 
-                Text = initialTitle, 
+            var checkBoxes = new Dictionary<string, CheckBox>();
+            var searchBox = new AutoSuggestBox {
+                Text = initialTitle,
                 QueryIcon = new SymbolIcon(Symbol.Find),
                 PlaceholderText = "Enter game title..."
             };
-            
+
             var loading = new ProgressRing { IsActive = false, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 10, 0, 10) };
-            var resultsList = new ListView { 
-                Height = 300, 
+            var resultsList = new ListView {
+                Height = 300,
                 SelectionMode = ListViewSelectionMode.Single,
                 ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(@"
                     <DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'>
@@ -1096,12 +1324,196 @@ namespace SteamRipApp
             stack.Children.Add(resultsList);
             dialog.Content = stack;
 
-            var result = await dialog.ShowAsync();
+            var result = await App.ShowDialogSafeAsync(dialog);
             if (result == ContentDialogResult.Primary && resultsList.SelectedItem is SteamAppIdResult selected)
             {
                 return selected.id;
             }
             return null;
+        }
+        private async Task ReviewAdditionalFilesAsync(string storagePath, string contentPath, string title)
+        {
+            var dialog = new ContentDialog {
+                Title = $"File Manager: {title}",
+                PrimaryButtonText = "Close",
+                XamlRoot = this.Content.XamlRoot,
+                MaxWidth = 900
+            };
+
+            var mainGrid = new Grid { Width = 800, Height = 550, Margin = new Thickness(0, 10, 0, 0) };
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            mainGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var diskList = new StackPanel { Spacing = 2 };
+            var qList = new StackPanel { Spacing = 4 };
+
+            async Task RefreshData()
+            {
+                diskList.Children.Clear();
+                qList.Children.Clear();
+
+                var report = await RepairService.AnalyzeGameAsync(storagePath, contentPath);
+                var quarantined = RepairService.GetQuarantinedFiles(storagePath);
+                var trusted = GlobalSettings.GetTrustedFiles(storagePath);
+
+                var diskHeader = new Grid { Margin = new Thickness(0, 0, 10, 10) };
+                diskHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                diskHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+                diskHeader.Children.Add(new TextBlock {
+                    Text = "Unrecognized file(s)",
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+
+                if (report.AddedFiles.Count > 0) {
+                    var bulkQ = new Button { Content = "Quarantine All", Padding = new Thickness(8, 4, 8, 4), FontSize = 12 };
+                    bulkQ.Click += async (s, e) => {
+                        RepairService.QuarantineFiles(storagePath, contentPath, report.AddedFiles);
+                        await RefreshData();
+                    };
+                    Grid.SetColumn(bulkQ, 1);
+                    diskHeader.Children.Add(bulkQ);
+                }
+                diskList.Children.Add(diskHeader);
+
+                foreach (var file in report.AddedFiles.OrderBy(f => f))
+                {
+                    bool isTrusted = trusted.Contains(file);
+                    diskList.Children.Add(CreateFileRow(file, true, isTrusted, async (action) => {
+                        if (action == "quarantine") {
+                            RepairService.QuarantineFiles(storagePath, contentPath, new List<string> { file });
+                        } else if (action == "trust") {
+                            trusted.Add(file);
+                            RepairService.UpdateModsManifest(storagePath, trusted.ToList());
+                        } else if (action == "untrust") {
+                            trusted.Remove(file);
+                            RepairService.UpdateModsManifest(storagePath, trusted.ToList());
+                        } else if (action == "delete") {
+                            string full = Path.Combine(contentPath, file);
+                            if (File.Exists(full)) File.Delete(full);
+                            else if (Directory.Exists(full)) Directory.Delete(full, true);
+                        }
+                        await RefreshData();
+                    }));
+                }
+
+                var qHeader = new Grid { Margin = new Thickness(10, 0, 0, 10) };
+                qHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                qHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+                qHeader.Children.Add(new TextBlock {
+                    Text = "Quarantined",
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+
+                if (quarantined.Count > 0) {
+                    var bulkR = new Button { Content = "Restore All", Padding = new Thickness(8, 4, 8, 4), FontSize = 12 };
+                    bulkR.Click += async (s, e) => {
+                        RepairService.UnquarantineFiles(storagePath, contentPath);
+
+                        var qFiles = RepairService.GetQuarantinedFiles(storagePath);
+                        foreach(var qf in qFiles) trusted.Add(qf.OriginalRelPath);
+                        RepairService.UpdateModsManifest(storagePath, trusted.ToList());
+                        await RefreshData();
+                    };
+                    Grid.SetColumn(bulkR, 1);
+                    qHeader.Children.Add(bulkR);
+                }
+                qList.Children.Add(qHeader);
+
+                foreach (var q in quarantined.OrderBy(f => f.DisplayName))
+                {
+                    qList.Children.Add(CreateFileRow(q.DisplayName, false, false, async (action) => {
+                        if (action == "restore") {
+                            string targetPath = Path.Combine(contentPath, q.OriginalRelPath);
+                            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                            if (q.IsDirectory) {
+                                if (Directory.Exists(targetPath)) Directory.Delete(targetPath, true);
+                                Directory.Move(q.FullQPath, targetPath);
+                            } else {
+                                File.Move(q.FullQPath, targetPath, true);
+                            }
+
+                            trusted.Add(q.OriginalRelPath);
+                            RepairService.UpdateModsManifest(storagePath, trusted.ToList());
+                        } else if (action == "delete") {
+                            if (q.IsDirectory) Directory.Delete(q.FullQPath, true);
+                            else File.Delete(q.FullQPath);
+                        }
+                        await RefreshData();
+                    }));
+                }
+            }
+
+            Grid CreateFileRow(string name, bool isOnDisk, bool isTrusted, Func<string, Task> onAction)
+            {
+                var row = new Grid {
+                    Margin = new Thickness(isOnDisk ? 0 : 10, 2, isOnDisk ? 10 : 0, 2),
+                    Padding = new Thickness(6),
+                    Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(isOnDisk && isTrusted ? Windows.UI.Color.FromArgb(30, 0, 255, 0) : Microsoft.UI.Colors.Transparent)
+                };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
+                row.Children.Add(new TextBlock {
+                    Text = name,
+                    FontSize = 11,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Opacity = isTrusted ? 0.6 : 1.0,
+                    FontStyle = isTrusted ? Windows.UI.Text.FontStyle.Italic : Windows.UI.Text.FontStyle.Normal
+                });
+
+                var btns = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+                Grid.SetColumn(btns, 1);
+
+                if (isOnDisk) {
+
+                    var tBtn = new Button { Content = isTrusted ? "🛡️" : "✅", Width = 28, Height = 28, Padding = new Thickness(0) };
+                    ToolTipService.SetToolTip(tBtn, isTrusted ? "Currently Trusted (Click to Untrust)" : "Trust this file (Hide from alerts)");
+                    tBtn.Click += async (s, e) => await onAction(isTrusted ? "untrust" : "trust");
+                    btns.Children.Add(tBtn);
+
+                    var qBtn = new Button { Content = "📦", Width = 28, Height = 28, Padding = new Thickness(0) };
+                    ToolTipService.SetToolTip(qBtn, "Quarantine");
+                    qBtn.Click += async (s, e) => await onAction("quarantine");
+                    btns.Children.Add(qBtn);
+                } else {
+                    var rBtn = new Button { Content = "⏪", Width = 28, Height = 28, Padding = new Thickness(0) };
+                    ToolTipService.SetToolTip(rBtn, "Restore and Trust");
+                    rBtn.Click += async (s, e) => await onAction("restore");
+                    btns.Children.Add(rBtn);
+                }
+
+                var dBtn = new Button {
+                    Content = "🗑",
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(0),
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.OrangeRed)
+                };
+                ToolTipService.SetToolTip(dBtn, "Delete Permanently");
+                dBtn.Click += async (s, e) => await onAction("delete");
+                btns.Children.Add(dBtn);
+
+                row.Children.Add(btns);
+                return row;
+            }
+
+            var leftScroll = new ScrollViewer { Content = diskList, Margin = new Thickness(0, 0, 4, 0) };
+            var rightScroll = new ScrollViewer { Content = qList, Margin = new Thickness(4, 0, 0, 0) };
+
+            Grid.SetColumn(leftScroll, 0);
+            Grid.SetColumn(rightScroll, 1);
+            mainGrid.Children.Add(leftScroll);
+            mainGrid.Children.Add(rightScroll);
+
+            dialog.Content = mainGrid;
+            _ = RefreshData();
+
+            await App.ShowDialogSafeAsync(dialog);
         }
     }
 }

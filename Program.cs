@@ -12,19 +12,12 @@ namespace SteamRipApp
         [STAThread]
         static void Main(string[] args)
         {
-            if (args.Length > 0 && args[0] == "--worker")
-            {
-                NativeBridgeService.Start();
-                new ManualResetEvent(false).WaitOne();
-                return;
-            }
 
             WinRT.ComWrappersSupport.InitializeComWrappers();
 
-            
             if (!Microsoft.Windows.ApplicationModel.DynamicDependency.Bootstrap.TryInitialize(0x00010005, out int hr))
             {
-                
+
             }
 
             var instance = AppInstance.FindOrRegisterForKey("SteamRipAppMainInstance");
@@ -39,7 +32,7 @@ namespace SteamRipApp
             }
             else
             {
-                
+
                 instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs()).AsTask().Wait();
             }
         }

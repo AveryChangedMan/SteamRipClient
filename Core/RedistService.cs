@@ -53,6 +53,7 @@ namespace SteamRipApp.Core
 
         public static List<RedistFile> GetRequiredRedists(string gameRootPath)
         {
+            _engine.RefreshInstalledSoftware();
             var required = new List<RedistFile>();
             string redistPath = Path.Combine(gameRootPath, "_CommonRedist");
             if (!Directory.Exists(redistPath)) return required;
@@ -62,7 +63,6 @@ namespace SteamRipApp.Core
                 var files = Directory.GetFiles(redistPath, "*.exe", SearchOption.AllDirectories)
                     .Concat(Directory.GetFiles(redistPath, "*.msi", SearchOption.AllDirectories)).ToList();
 
-                
                 string manifestPath = Path.Combine(redistPath, "redists.txt");
                 var manifestNames = new List<string>();
                 if (File.Exists(manifestPath))
@@ -70,7 +70,6 @@ namespace SteamRipApp.Core
                     manifestNames = File.ReadAllLines(manifestPath).Select(l => l.Trim()).Where(l => !string.IsNullOrEmpty(l)).ToList();
                 }
 
-                
                 var allCandidates = files.Select(f => new { Path = f, Name = Path.GetFileName(f) })
                     .Concat(manifestNames.Select(n => new { Path = "", Name = n }))
                     .GroupBy(x => x.Name)
@@ -79,19 +78,18 @@ namespace SteamRipApp.Core
                 foreach (var candidate in allCandidates)
                 {
                     string fileName = candidate.Name;
-                    
+
                     if (MasterRedistList.Any(m => string.Equals(m, fileName, StringComparison.OrdinalIgnoreCase)))
                     {
                         string finalPath = candidate.Path;
-                        
-                        
+
                         if (File.Exists(finalPath))
                         {
                             BackupRedist(finalPath);
                         }
                         else
                         {
-                            
+
                             string backupFile = Path.Combine(BackupPath, fileName);
                             if (File.Exists(backupFile))
                             {
@@ -123,10 +121,10 @@ namespace SteamRipApp.Core
             try
             {
                 if (!Directory.Exists(BackupPath)) Directory.CreateDirectory(BackupPath);
-                
+
                 string fileName = Path.GetFileName(sourcePath);
                 string destPath = Path.Combine(BackupPath, fileName);
-                
+
                 if (!File.Exists(destPath))
                 {
                     File.Copy(sourcePath, destPath);
@@ -151,7 +149,7 @@ namespace SteamRipApp.Core
                 else if (lower.Contains("2012")) year = "VC++ 2012";
                 else if (lower.Contains("2013")) year = "VC++ 2013";
                 else if (lower.Contains("2015") || lower.Contains("2019") || lower.Contains("2022")) year = "VC++ 2015-2022";
-                
+
                 string arch = lower.Contains("x64") ? " (x64)" : " (x86)";
                 return year + arch;
             }
@@ -161,7 +159,7 @@ namespace SteamRipApp.Core
             if (lower.Contains("dotnet")) return ".NET Framework / Runtime";
             if (lower.Contains("xna")) return "Microsoft XNA Framework";
             if (lower.Contains("social-club")) return "Rockstar Social Club";
-            
+
             return fileName;
         }
 

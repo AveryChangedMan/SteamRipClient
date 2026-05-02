@@ -46,12 +46,11 @@ namespace SteamRipApp
                 foreach (var res in searchResults) Results.Add(res);
                 ResultsGrid.ItemsSource = Results;
 
-                
                 _ = Task.Run(async () => {
                     try {
                         foreach (var item in searchResults)
                         {
-                            
+
                             var bzTask = SteamRipScraper.CheckBuzzheavierAsync(item.Url);
                             var gfTask = SteamRipScraper.CheckGoFileAsync(item.Url);
                             await Task.WhenAll(bzTask, gfTask);
@@ -59,23 +58,27 @@ namespace SteamRipApp
                             var (bzFound, bzUrl) = await bzTask;
                             var (gfFound, gfPageUrl, gfDirectLinks) = await gfTask;
 
-                            this.DispatcherQueue.TryEnqueue(() => {
+                            this.DispatcherQueue?.TryEnqueue(() => {
                                 item.BuzzheavierUrl = bzUrl;
                                 item.IsBuzzheavierAvailable = bzFound;
-                                
-                                item.GoFileUrl = gfPageUrl;
-                                item.GoFileDirectLinks = gfDirectLinks;
-                                item.IsGoFileAvailable = gfFound;
+
+                                if (bzUrl.Contains("vikingfile") || bzUrl.Contains("vik1ngfile"))
+                                {
+                                    item.DownloadStatus = "Viking File Ready";
+                                }
                             });
                         }
-                    } catch { }
+                    } catch (Exception ex) {
+                        Logger.LogError("HomeBackgroundCheck", ex);
+                    }
                 });
             } catch (Exception ex) {
                 Logger.LogError("HomeUI", ex);
             } finally {
                 LoadingRing.IsActive = false;
             }
-        }        
+        }
+
         private async void QuickDownload_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button btn) return;
@@ -84,28 +87,12 @@ namespace SteamRipApp
 
             try {
                 item.IsDownloading = true;
-                
-                
-                GlobalProgressPanel.Visibility = Visibility.Visible;
-                GlobalProgressBar.Value = 0;
-                GlobalStatusText.Text = "Initializing...";
 
-                
-                _ = Task.Run(async () => {
-                    while (item.IsDownloading && GlobalProgressBar.Value < 90) {
-                        await Task.Delay(200);
-                        this.DispatcherQueue.TryEnqueue(() => {
-                            if (GlobalProgressBar.Value < 30) GlobalProgressBar.Value += 2;
-                            else if (GlobalProgressBar.Value < 60) GlobalProgressBar.Value += 1;
-                            else GlobalProgressBar.Value += 0.5;
-                        });
-                    }
-                });
+                var mainWindow = (Application.Current as App)?.m_window as MainWindow;
+                mainWindow?.ShowGlobalOverlay($"Quick Download: {item.Title}", "Scanning for available sources...");
 
-                GlobalStatusText.Text = "Scanning for sources...";
                 await Task.Delay(500);
 
-                
                 var bzTask = SteamRipScraper.CheckBuzzheavierAsync(item.Url);
                 var gfTask = SteamRipScraper.CheckGoFileAsync(item.Url);
                 await Task.WhenAll(bzTask, gfTask);
@@ -122,21 +109,20 @@ namespace SteamRipApp
                 if (!bzFound && !gfFound)
                 {
                     item.IsDownloading = false;
-                    GlobalProgressPanel.Visibility = Visibility.Collapsed;
+                    mainWindow?.HideGlobalOverlay();
                     var dialog = new ContentDialog {
                         Title = "Sources Not Found",
                         Content = "Sorry this game doesn't have our sources, try a manual installation. You can still add it to our launcher after its completed",
                         CloseButtonText = "OK",
                         XamlRoot = this.XamlRoot
                     };
-                    await dialog.ShowAsync();
+                    await App.ShowDialogSafeAsync(dialog);
                     return;
                 }
 
-                
                 if (bzFound && gfFound)
                 {
-                    GlobalStatusText.Text = "Select Source...";
+                    mainWindow?.UpdateGlobalOverlay("Select your preferred source...");
                     var selectDialog = new ContentDialog {
                         Title = "Select Download Source",
                         Content = "Both Gofile and SteamRip (Buzzheavier) are available. Which would you prefer?",
@@ -146,7 +132,7 @@ namespace SteamRipApp
                         XamlRoot = this.XamlRoot
                     };
 
-                    var result = await selectDialog.ShowAsync();
+                    var result = await App.ShowDialogSafeAsync(selectDialog);
                     if (result == ContentDialogResult.Primary) {
                         await StartBuzzheavierDownload(item);
                     }
@@ -155,30 +141,32 @@ namespace SteamRipApp
                     }
                     else {
                         item.IsDownloading = false;
-                        GlobalProgressPanel.Visibility = Visibility.Collapsed;
+                        mainWindow?.HideGlobalOverlay();
                         return;
                     }
                 }
                 else if (gfFound)
                 {
-                    GlobalStatusText.Text = "Using Gofile...";
+                    mainWindow?.UpdateGlobalOverlay("Using Gofile...");
                     await StartGoFileDownload(item);
                 }
                 else if (bzFound)
                 {
-                    GlobalStatusText.Text = "Using Buzzheavier...";
+                    mainWindow?.UpdateGlobalOverlay("Using Buzzheavier...");
                     await StartBuzzheavierDownload(item);
                 }
 
-                GlobalProgressBar.Value = 100;
-                GlobalStatusText.Text = "Success!";
+                mainWindow?.UpdateGlobalOverlay("Success!", 100);
                 await Task.Delay(1500);
+                mainWindow?.HideGlobalOverlay();
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload", ex);
-                GlobalStatusText.Text = "Error occurred.";
+                var mainWindow = (Application.Current as App)?.m_window as MainWindow;
+                mainWindow?.UpdateGlobalOverlay("Error occurred. Please try again.");
+                await Task.Delay(2000);
+                mainWindow?.HideGlobalOverlay();
             } finally {
                 item.IsDownloading = false;
-                GlobalProgressPanel.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -194,39 +182,29 @@ namespace SteamRipApp
                 await StartGoFileDownload(item);
         }
 
-        
         private async Task<string?> PickOrGetSaveFolderAsync()
         {
-            
+
             if (GlobalSettings.HasSelectedDownloadDirectory && !string.IsNullOrEmpty(GlobalSettings.DownloadDirectory)
                 && Directory.Exists(GlobalSettings.DownloadDirectory))
             {
                 return GlobalSettings.DownloadDirectory;
             }
 
-            
-            var picker = new Windows.Storage.Pickers.FolderPicker();
-            picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.Downloads;
-            picker.FileTypeFilter.Add("*");
+            var path = await PickerService.PickFolderAsync();
+            if (string.IsNullOrEmpty(path)) return null;
 
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle((Application.Current as App)?.m_window);
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder == null) return null;
-
-            GlobalSettings.DownloadDirectory = folder.Path;
+            GlobalSettings.DownloadDirectory = path;
             GlobalSettings.HasSelectedDownloadDirectory = true;
 
-            if (!GlobalSettings.ScanDirectories.Contains(folder.Path))
-                GlobalSettings.ScanDirectories.Add(folder.Path);
+            if (!GlobalSettings.ScanDirectories.Contains(path))
+                GlobalSettings.ScanDirectories.Add(path);
 
             GlobalSettings.Save();
-            Logger.Log($"[Download] Default download dir set to: {folder.Path}");
-            return folder.Path;
+            Logger.Log($"[Download] Default download dir set to: {path}");
+            return path;
         }
 
-        
         private async Task StartBuzzheavierDownload(SearchResult item)
         {
             if (string.IsNullOrEmpty(item.BuzzheavierUrl)) return;
@@ -238,15 +216,19 @@ namespace SteamRipApp
                 var savePath = await PickOrGetSaveFolderAsync();
                 if (savePath == null) { Logger.Log("[QuickDownload-Buzz] Cancelled."); return; }
 
-                
                 var directUrl = await UrlResolver.ResolveDirectUrlAsync(bzzhrUrl);
                 if (string.IsNullOrEmpty(directUrl))
                 {
+                    var mainWindow = (Application.Current as App)?.m_window as MainWindow;
+                    mainWindow?.UpdateGlobalOverlay("API failed, falling back to browser interceptor...");
                     Logger.Log("[QuickDownload-Buzz] API resolution failed. Falling back to Interceptor...");
                     directUrl = await InterceptDownloadUrlAsync(bzzhrUrl);
                 }
 
-                if (string.IsNullOrEmpty(directUrl)) { Logger.Log("[QuickDownload-Buzz] No URL found."); return; }
+                if (string.IsNullOrEmpty(directUrl)) {
+                    Logger.Log("[QuickDownload-Buzz] No URL found.");
+                    return;
+                }
 
                 var fileName = ExtractFileNameFromUrl(directUrl) ?? (MakeSafeFileName(item.Title) + ".rar");
                 var destPath = Path.Combine(savePath, fileName);
@@ -257,7 +239,6 @@ namespace SteamRipApp
             }
         }
 
-        
         private async Task StartGoFileDownload(SearchResult item)
         {
             try {
@@ -266,10 +247,8 @@ namespace SteamRipApp
                 var savePath = await PickOrGetSaveFolderAsync();
                 if (savePath == null) { Logger.Log("[QuickDownload-GoFile] Cancelled."); return; }
 
-                
                 var directLinks = item.GoFileDirectLinks;
 
-                
                 if (directLinks == null || directLinks.Count == 0)
                 {
                     Logger.Log("[QuickDownload-GoFile] Direct links not pre-resolved, resolving via API...");
@@ -277,11 +256,10 @@ namespace SteamRipApp
                     if (!string.IsNullOrEmpty(resolved)) directLinks = new List<string> { resolved };
                 }
 
-                
                 var directUrl = directLinks?.FirstOrDefault();
                 if (string.IsNullOrEmpty(directUrl))
                 {
-                    
+
                     var dialog = new ContentDialog
                     {
                         Title = "Automation Failed",
@@ -290,7 +268,7 @@ namespace SteamRipApp
                         CloseButtonText = "Cancel",
                         XamlRoot = this.XamlRoot
                     };
-                    if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                    if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary)
                     {
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(item.GoFileUrl) { UseShellExecute = true });
                     }
@@ -309,7 +287,7 @@ namespace SteamRipApp
 
         private async Task StartDownloadWithMetadata(SearchResult item, string destPath, string directUrl, string pageUrl, string sourceName, bool isGoFile = false)
         {
-            
+
             try {
                 var (totalBytes, _) = await CustomDownloader.ProbeServerAsync(directUrl, isGoFile ? GoFileClient.AccountToken : null);
                 if (totalBytes > 0)
@@ -329,7 +307,7 @@ namespace SteamRipApp
                                 CloseButtonText = "OK",
                                 XamlRoot = this.XamlRoot
                             };
-                            await dialog.ShowAsync();
+                            await App.ShowDialogSafeAsync(dialog);
                             ResetDownloadButton(item);
                             return;
                         }
@@ -343,7 +321,7 @@ namespace SteamRipApp
                                 SecondaryButtonText = "Cancel",
                                 XamlRoot = this.XamlRoot
                             };
-                            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                            if (await App.ShowDialogSafeAsync(dialog) != ContentDialogResult.Primary)
                             {
                                 ResetDownloadButton(item);
                                 return;
@@ -372,8 +350,19 @@ namespace SteamRipApp
 
             var downloader = new CustomDownloader(directUrl, destPath);
             downloader.BuzzheavierPageUrl = pageUrl;
+            downloader.SteamRipPageUrl = item.Url;
             downloader.ThreadCount = 12;
             if (isGoFile) downloader.GoFileToken = GoFileClient.AccountToken;
+
+            _ = new DownloadSessionMetadata
+            {
+                GameTitle = item.Title,
+                SteamRipUrl = item.Url,
+                ArchivePath = destPath,
+                Version = "",
+                ImageUrl = item.ImageUrl,
+                DownloadDir = GlobalSettings.DownloadDirectory
+            }.SaveAsync();
 
             downloader.ProgressChanged += (s, stats) => {
                 this.DispatcherQueue.TryEnqueue(() => {
@@ -391,30 +380,33 @@ namespace SteamRipApp
                     var sizeStr = stats.TotalBytes > 0
                         ? $"{stats.BytesReceived / (1024.0 * 1024):F0}/{stats.TotalBytes / (1024.0 * 1024):F0} MB"
                         : "";
-                    metadata.Status = $"{speedVal:F1} {speedUnit}  {sizeStr}  {etaStr}  [{stats.ActiveThreads}t]";
+                    string statusText = $"{speedVal:F1} {speedUnit}  {sizeStr}  {etaStr}  [{stats.ActiveThreads}t]";
+                    metadata.Status = statusText;
+
+                    var mw = (Application.Current as App)?.m_window as MainWindow;
+                    mw?.UpdateGlobalOverlay("Downloading Game...", stats.Percentage, statusText);
                 });
             };
             downloader.DownloadCompleted += async (s, e) =>
             {
-                
+
+                var mainWindow = (Application.Current as App)?.m_window as MainWindow;
                 this.DispatcherQueue.TryEnqueue(() => {
                     metadata.Phase = "Extracting";
                     metadata.Status = "📦 Download complete — starting extraction...";
                     metadata.Percentage = 0;
+                    mainWindow?.UpdateGlobalOverlay("Extracting Game...", 0, "Decompressing and verifying files...");
                 });
 
-                
                 var archivePath = destPath;
                 var extractDir  = Path.GetDirectoryName(destPath) ?? GlobalSettings.DownloadDirectory;
 
-                
                 string version = "";
                 try {
                     if (!string.IsNullOrEmpty(item.Url))
                         version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
                 } catch { }
 
-                
                 metadata.Title = ScannerEngine.CleanTitle(metadata.Title);
 
                 var gameFolder = await PostDownloadProcessor.RunAsync(
@@ -427,6 +419,7 @@ namespace SteamRipApp
                     onStatus: msg => {
                         this.DispatcherQueue.TryEnqueue(() => {
                             metadata.Status = msg;
+                            mainWindow?.UpdateGlobalOverlay("Extracting Game...", null, msg);
                             if (msg.Contains("CRITICAL SPACE LIMIT"))
                             {
                                 if (DateTime.Now - GlobalSettings.LastSpaceWarningTime > TimeSpan.FromHours(2))
@@ -436,7 +429,10 @@ namespace SteamRipApp
                             }
                         });
                     },
-                    onProgress: pct => this.DispatcherQueue.TryEnqueue(() => metadata.Percentage = Math.Round(pct, 1)),
+                    onProgress: pct => this.DispatcherQueue.TryEnqueue(() => {
+                        metadata.Percentage = Math.Round(pct, 1);
+                        mainWindow?.UpdateGlobalOverlay("Extracting Game...", pct);
+                    }),
                     confirmSpace: async (free, req) => {
                         var tcs = new TaskCompletionSource<bool>();
                         this.DispatcherQueue.TryEnqueue(async () => {
@@ -448,23 +444,24 @@ namespace SteamRipApp
                                 SecondaryButtonText = "Cancel Installation",
                                 XamlRoot = this.XamlRoot
                             };
-                            var result = await dialog.ShowAsync();
+                            var result = await App.ShowDialogSafeAsync(dialog);
                             tcs.SetResult(result == ContentDialogResult.Primary);
                         });
                         return await tcs.Task;
                     },
                     confirmMap: async (title) => {
+                        if (GlobalSettings.AlwaysCreateRarMap) return true;
                         var tcs = new TaskCompletionSource<bool>();
                         this.DispatcherQueue.TryEnqueue(async () => {
                             try {
                                 var dialog = new ContentDialog {
                                     Title = "Create Repair Map?",
-                                    Content = $"Would you like to generate a byte-map for {title}? This allows the 'Hard Repair' system to fix corrupted files without re-downloading the entire game later.",
+                                    Content = $"Would you like to generate a byte-map for {title}? This allows the 'Repair' system to fix corrupted files without re-downloading the entire game later.",
                                     PrimaryButtonText = "Create Map (Recommended)",
                                     CloseButtonText = "Skip",
                                     XamlRoot = this.XamlRoot
                                 };
-                                var result = await dialog.ShowAsync();
+                                var result = await App.ShowDialogSafeAsync(dialog);
                                 tcs.SetResult(result == ContentDialogResult.Primary);
                             } catch (Exception ex) {
                                 Logger.LogError("MapPrompt", ex);
@@ -476,30 +473,34 @@ namespace SteamRipApp
                 );
 
                 this.DispatcherQueue.TryEnqueue(() => {
+                    var mw = (Application.Current as App)?.m_window as MainWindow;
                     if (gameFolder != null)
                     {
                         metadata.Phase = "Done";
                         metadata.Status = "✅ Extraction completed";
                         metadata.Percentage = 100;
+                        mw?.UpdateGlobalOverlay("Installation Successful!", 100, "Game is ready to play.");
                     }
                     else
                     {
                         metadata.Phase = "Failed";
                         metadata.Status = "❌ Extraction failed — verify extractor in Settings.";
+                        mw?.UpdateGlobalOverlay("Installation Failed", 0, "Check logs for details.");
                     }
 
                     GlobalSettings.Save();
-
-                    
-                    var mw = (Application.Current as App)?.m_window as MainWindow;
                     mw?.RefreshLibrary();
+
+                    _ = Task.Run(async () => {
+                        await Task.Delay(3000);
+                        this.DispatcherQueue.TryEnqueue(() => mw?.HideGlobalOverlay());
+                    });
                 });
             };
             downloader.DownloadFailed += (s, msg) => {
                 this.DispatcherQueue.TryEnqueue(() => metadata.Status = $"❌ {msg}");
             };
 
-            
             downloader.LinkExpired += async (expiredPageUrl) => {
                 if (isGoFile && !string.IsNullOrEmpty(item.GoFileUrl))
                 {
@@ -507,7 +508,6 @@ namespace SteamRipApp
                     var freshLinks = await GoFileClient.GetDirectLinksAsync(item.GoFileUrl);
                     if (freshLinks.Count > 0) return freshLinks[0];
 
-                    
                     Logger.Log("[Download] GoFile renewal failed, falling back to Buzzheavier interceptor...");
                     if (!string.IsNullOrEmpty(item.BuzzheavierUrl))
                     {
@@ -522,7 +522,7 @@ namespace SteamRipApp
                 }
                 else
                 {
-                    
+
                     var tcs = new TaskCompletionSource<string>();
                     this.DispatcherQueue.TryEnqueue(async () => {
                         try { tcs.SetResult(await InterceptDownloadUrlAsync(expiredPageUrl)); }
@@ -536,7 +536,6 @@ namespace SteamRipApp
             await downloader.StartDownloadAsync();
         }
 
-        
         private async Task<string> InterceptDownloadUrlAsync(string targetUrl)
         {
             Logger.Log($"[Interceptor] Starting for: {targetUrl}");
@@ -574,7 +573,6 @@ namespace SteamRipApp
             var url = sender.Source?.ToString() ?? "";
             Logger.Log($"[Interceptor] Page loaded: {url}");
 
-            
             if (!url.Contains("bzzhr.to") && !url.Contains("buzzheavier") && !url.Contains("gofile.io")) return;
 
             await Task.Delay(1500);
@@ -624,7 +622,11 @@ namespace SteamRipApp
             GameInfoList.Children.Clear();
 
             try {
-                LiveChatWebView.Source = new Uri(url);
+                try {
+                    LiveChatWebView.Source = new Uri(url);
+                } catch (Exception ex) {
+                    Logger.Log($"[Home] WebView2 navigation failed: {ex.Message}");
+                }
                 var details = await SteamRipScraper.GetGameDetailsAsync(url);
 
                 foreach (var info in details.GameInfo)
@@ -694,14 +696,13 @@ namespace SteamRipApp
             PropertiesDialog.Visibility = Visibility.Collapsed;
         }
 
-        
         private static string? ExtractFileNameFromUrl(string? url)
         {
             if (string.IsNullOrEmpty(url)) return null;
             try {
                 var uri = new Uri(url);
                 var name = Path.GetFileName(uri.LocalPath);
-                
+
                 if (!string.IsNullOrEmpty(name) && name.Contains('.'))
                 {
                     Logger.Log($"[Filename] Extracted from URL: {name}");
@@ -731,7 +732,7 @@ namespace SteamRipApp
                 CloseButtonText = "I Understand",
                 XamlRoot = this.XamlRoot
             };
-            await dialog.ShowAsync();
+            await App.ShowDialogSafeAsync(dialog);
             GlobalSettings.LastSpaceWarningTime = DateTime.Now;
             GlobalSettings.Save();
         }

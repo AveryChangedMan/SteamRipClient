@@ -11,10 +11,7 @@ using HtmlAgilityPack;
 
 namespace SteamRipApp.Core
 {
-    
-    
-    
-    
+
     public static class GoFileClient
     {
         private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -37,10 +34,6 @@ namespace SteamRipApp.Core
             _http.Timeout = TimeSpan.FromSeconds(20);
         }
 
-        
-        
-        
-        
         private static string GenerateWebsiteToken(string accountToken = "")
         {
             long timeSlot = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 14400;
@@ -49,10 +42,6 @@ namespace SteamRipApp.Core
             return Convert.ToHexString(hash).ToLowerInvariant();
         }
 
-        
-        
-        
-        
         private static async Task<string?> CreateGuestAccountAsync()
         {
             try {
@@ -79,10 +68,6 @@ namespace SteamRipApp.Core
             return null;
         }
 
-        
-        
-        
-        
         private static async Task<JsonElement?> GetContentsAsync(string contentId, string accountToken)
         {
             try {
@@ -100,11 +85,11 @@ namespace SteamRipApp.Core
                 Logger.Log($"[GoFile] GetContents [{contentId}] status={resp.StatusCode} body={json.Substring(0, Math.Min(json.Length, 500))}");
 
                 using var doc = JsonDocument.Parse(json);
-                
+
                 if (doc.RootElement.TryGetProperty("status", out var statusProp) &&
                     statusProp.GetString() == "ok")
                 {
-                    
+
                     return doc.RootElement.GetProperty("data").Clone();
                 }
                 else {
@@ -117,10 +102,6 @@ namespace SteamRipApp.Core
             return null;
         }
 
-        
-        
-        
-        
         private static List<string> ExtractLinks(JsonElement data)
         {
             var links = new List<string>();
@@ -146,26 +127,18 @@ namespace SteamRipApp.Core
             return links;
         }
 
-        
-        
-        
-        
         public static string? ExtractContentId(string goFileUrl)
         {
             try {
                 var uri = new Uri(goFileUrl);
                 var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                
+
                 if (parts.Length >= 2 && parts[^2] == "d")
                     return parts[^1];
             } catch { }
             return null;
         }
 
-        
-        
-        
-        
         public static async Task<List<string>> GetDirectLinksAsync(string goFileUrl)
         {
             Logger.Log($"[GoFile] GetDirectLinks for: {goFileUrl}");
@@ -177,7 +150,6 @@ namespace SteamRipApp.Core
                 return new List<string>();
             }
 
-            
             if (string.IsNullOrEmpty(_accountToken))
                 _accountToken = await CreateGuestAccountAsync();
 
@@ -187,11 +159,10 @@ namespace SteamRipApp.Core
                 return new List<string>();
             }
 
-            
             var data = await GetContentsAsync(contentId, _accountToken);
             if (data == null)
             {
-                
+
                 Logger.Log("[GoFile] Retrying with fresh account token...");
                 _accountToken = await CreateGuestAccountAsync();
                 if (_accountToken != null)
@@ -204,16 +175,11 @@ namespace SteamRipApp.Core
                 return new List<string>();
             }
 
-            
             var links = ExtractLinks(data.Value);
             Logger.Log($"[GoFile] Found {links.Count} direct link(s): {string.Join(", ", links)}");
             return links;
         }
 
-        
-        
-        
-        
         public static async Task<(bool found, string pageUrl, List<string> directLinks)> CheckAndResolveAsync(string steamRipPageUrl)
         {
             try {
@@ -222,14 +188,13 @@ namespace SteamRipApp.Core
                 var doc = new HtmlAgilityPack.HtmlDocument();
                 doc.LoadHtml(html);
 
-                
                 var goFileNode = doc.DocumentNode
                     .SelectNodes("//a[contains(@href, 'gofile.io')] | //a[contains(text(), 'GOFILE')]")
                     ?.FirstOrDefault();
 
                 if (goFileNode == null)
                 {
-                    
+
                     var allLinks = doc.DocumentNode.SelectNodes("//a[@href]");
                     if (allLinks != null)
                     {
@@ -248,7 +213,7 @@ namespace SteamRipApp.Core
                 string href = "";
                 if (goFileNode == null)
                 {
-                    
+
                     var match = Regex.Match(html, @"href\s*=\s*[""']?([^""' >]*gofile\.io[^""' >]*)[""']?", RegexOptions.IgnoreCase);
                     if (match.Success)
                     {
@@ -267,13 +232,11 @@ namespace SteamRipApp.Core
 
                 if (href.StartsWith("//")) href = "https:" + href;
                 if (!href.StartsWith("http") && href.Contains("gofile.io")) href = "https://" + href.TrimStart('/');
-                
+
                 Logger.Log($"[GoFile] Found GoFile page link: {href}");
 
-                
                 var directLinks = await GetDirectLinksAsync(href);
-                
-                
+
                 return (!string.IsNullOrEmpty(href), href, directLinks);
             } catch (Exception ex) {
                 Logger.LogError("GoFile.CheckAndResolve", ex);
