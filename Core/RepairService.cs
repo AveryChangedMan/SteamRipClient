@@ -317,9 +317,17 @@ namespace SteamRipApp.Core
                     {
                         Logger.Log($"[Repair-Hashing] Skipping auto-hashing for {storage} (Snapshot {snapshot ?? "Default"} already exists)");
                     }
-                    else
+                    try
                     {
                         await RunHashingProcessAsync(storage, content, ct, snapshot);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"[Repair] Error hashing {storage}: {ex.Message}");
+                    }
+                    finally
+                    {
+                        UpdateGameProgress(content, false, "Ready", 0, "");
                     }
                 }
                 else
@@ -409,6 +417,28 @@ namespace SteamRipApp.Core
 
         [DllImport("NativeHash.dll", CharSet = CharSet.Unicode)]
         private static extern int XXH64_HashFile(string filePath, out ulong outHash);
+
+        private static void UpdateGameProgress(string rootPath, bool isInProgress, string phase, double percentage, string details)
+        {
+            try
+            {
+                var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+                if (dispatcher == null) return;
+
+                dispatcher.TryEnqueue(() =>
+                {
+                    var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.RootPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase));
+                    if (gf != null)
+                    {
+                        gf.IsInProgress = isInProgress;
+                        gf.ProgressPhase = phase;
+                        gf.ProgressPercentage = percentage;
+                        gf.ProgressDetails = details;
+                    }
+                });
+            }
+            catch { }
+        }
 
         private static string GetFileFingerprint(string path, out long fileTime)
         {
@@ -575,16 +605,12 @@ namespace SteamRipApp.Core
                 return;
             }
 
-            GlobalSettings.HashingProgress = $"Hashing: {Path.GetFileName(file)} ({currentIdx}/{total})";
-            GlobalSettings.HashingProgressValue = (currentIdx * 100.0) / total;
-
-            var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.RootPath.Equals(contentPath, StringComparison.OrdinalIgnoreCase));
-            if (gf != null)
+            // Throttled UI update
+            if (currentIdx % 10 == 0 || currentIdx == total)
             {
-                gf.IsInProgress = true;
-                gf.ProgressPhase = "Verifying...";
-                gf.ProgressPercentage = GlobalSettings.HashingProgressValue;
-                gf.ProgressDetails = $"{currentIdx} / {total} files";
+                GlobalSettings.HashingProgress = $"Hashing: {Path.GetFileName(file)} ({currentIdx}/{total})";
+                GlobalSettings.HashingProgressValue = (currentIdx * 100.0) / total;
+                UpdateGameProgress(contentPath, true, "Verifying...", GlobalSettings.HashingProgressValue, $"{currentIdx} / {total} files");
             }
 
             string hash = "";
@@ -998,33 +1024,43 @@ namespace SteamRipApp.Core
 
                                     if (metadataOnly)
                                     {
+                                        Logger.Log($"[Repair-Analyze] Metadata mismatch for {entry.Path}. Size:{fileSize}/{skelFile.Size}, Time:{fileTime}/{skelFile.FileTime}, ID:{fileId}/{skelFile.FileId}");
                                         lock (report.CorruptedFiles) report.CorruptedFiles.Add(entry.Path);
                                         if (earlyExit) { state.Stop(); return; }
                                         return;
                                     }
                                 }
                                 catch { }
-
                                 try
                                 {
                                     int result = XXH64_HashFile(fullPath, out ulong hashValue);
-                                    if (result == 0)
+                                    string currentHash = "";
+                                    if (result == 0) currentHash = hashValue.ToString("x16");
+
+                                    if (string.IsNullOrEmpty(currentHash))
                                     {
-                                        string currentHash = hashValue.ToString("x16");
-                                        if (currentHash != skelFile.Hash)
+                                        try {
+                                            using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                                            var xx = new System.IO.Hashing.XxHash64();
+                                            xx.Append(fs);
+                                            currentHash = BitConverter.ToUInt64(xx.GetCurrentHash().Reverse().ToArray()).ToString("x16");
+                                        } catch { }
+                                    }
+
+                                    if (!string.IsNullOrEmpty(currentHash) && currentHash != skelFile.Hash)
+                                    {
+                                        Logger.Log($"[Repair-Analyze] HASH MISMATCH for {entry.Path}: Local={currentHash}, Skeleton={skelFile.Hash}");
+                                        lock (report.CorruptedFiles) report.CorruptedFiles.Add(entry.Path);
+                                        if (earlyExit) { state.Stop(); return; }
+                                    }
+                                    else if (!string.IsNullOrEmpty(currentHash))
+                                    {
+                                        lock (skeleton)
                                         {
-                                            lock (report.CorruptedFiles) report.CorruptedFiles.Add(entry.Path);
-                                            if (earlyExit) { state.Stop(); return; }
-                                        }
-                                        else
-                                        {
-                                            lock (skeleton)
-                                            {
-                                                skelFile.Size = fileSize;
-                                                skelFile.FileTime = fileTime;
-                                                skelFile.FileId = fileId;
-                                                skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
-                                            }
+                                            skelFile.Size = fileSize;
+                                            skelFile.FileTime = fileTime;
+                                            skelFile.FileId = fileId;
+                                            skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
                                         }
                                     }
                                 }

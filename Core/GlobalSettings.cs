@@ -151,7 +151,7 @@ namespace SteamRipApp.Core
         public bool AntivirusExclusionAdded { get; set; }
         public bool IsAdvancedRepairVisible { get; set; } = false;
         public bool IsHddModeEnabled { get; set; } = false;
-        public string AppVersion { get; set; } = "1.4.1.0";
+        public string AppVersion { get; set; } = "1.4.9.4";
         public string? HashingProgress { get; set; }
         public bool IsSteamUpdateRequired { get; set; }
         public string RepairLogicVersion { get; set; } = "1.2.1";
@@ -192,8 +192,8 @@ namespace SteamRipApp.Core
         public static bool IsSteamUpdateRequired { get; set; }
         public static bool IsAdvancedRepairVisible { get; set; } = false;
         public static bool IsHddModeEnabled { get; set; } = false;
-        public static string AppVersion { get; set; } = "1.4.8.6";
-        public static string RepairLogicVersion { get; set; } = "1.2.1";
+        public static string AppVersion { get; set; } = "1.4.9.4";
+        public static string RepairLogicVersion { get; set; } = "1.3.0";
 
         private static readonly string SavePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamRipApp", "settings.json");
         private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
@@ -313,7 +313,7 @@ namespace SteamRipApp.Core
                         HashingProgress = data.HashingProgress;
                         IsSteamUpdateRequired = data.IsSteamUpdateRequired;
                         IsAdvancedRepairVisible = data.IsAdvancedRepairVisible;
-                        AppVersion = data.AppVersion ?? "1.4.1.0";
+                        GlobalSettings.AppVersion = "1.4.9.1";
                         RepairLogicVersion = data.RepairLogicVersion ?? "1.2.1";
                         IsHddModeEnabled = data.IsHddModeEnabled;
 

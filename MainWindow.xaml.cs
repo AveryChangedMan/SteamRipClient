@@ -316,7 +316,7 @@ namespace SteamRipApp
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
             var current = ParseVersion(GlobalSettings.AppVersion);
-            var target = ParseVersion("1.4.6.0");
+            var target = ParseVersion("1.4.9.4");
 
             bool isOldVersion = (current.x1 < target.x1)
                 || (current.x1 == target.x1 && current.x2 < target.x2)
@@ -437,7 +437,7 @@ namespace SteamRipApp
                 GlobalSettings.ScanDirectories.Add(GlobalSettings.DownloadDirectory);
 
             GlobalSettings.IsSetupCompleted = true;
-            GlobalSettings.AppVersion = "1.4.6.0";
+            GlobalSettings.AppVersion = "1.4.9.4";
             GlobalSettings.Save();
 
             Logger.Log($"[Setup] Completed. Download Dir: {GlobalSettings.DownloadDirectory}");

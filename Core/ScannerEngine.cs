@@ -45,8 +45,8 @@ namespace SteamRipApp.Core
             get => _latestVersion;
             set {
                 _latestVersion = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LatestVersion)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasVersionUpdate)));
+                OnPropertyChanged(nameof(LatestVersion));
+                OnPropertyChanged(nameof(LatestVersion));
             }
         }
         public bool HasVersionUpdate => !string.IsNullOrEmpty(LatestVersion) && !string.IsNullOrEmpty(Version) && !LatestVersion.Equals(Version, StringComparison.OrdinalIgnoreCase);
@@ -142,7 +142,7 @@ namespace SteamRipApp.Core
             set {
                 _isRunning = value;
                 NotifyAll();
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LaunchButtonText)));
+                OnPropertyChanged(nameof(IsRunning));
             }
         }
 
@@ -152,7 +152,7 @@ namespace SteamRipApp.Core
             set {
                 _isRepairRequired = value;
                 NotifyAll();
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LaunchButtonText)));
+                OnPropertyChanged(nameof(IsRepairRequired));
             }
         }
 
@@ -163,7 +163,7 @@ namespace SteamRipApp.Core
             set {
                 _isRepairInterrupted = value;
                 NotifyAll();
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LaunchButtonText)));
+                OnPropertyChanged(nameof(IsRepairInterrupted));
             }
         }
 
@@ -193,7 +193,7 @@ namespace SteamRipApp.Core
             set {
                 if (_estimatedTime == value) return;
                 _estimatedTime = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(EstimatedTime)));
+                OnPropertyChanged(nameof(EstimatedTime));
             }
         }
 
@@ -203,11 +203,11 @@ namespace SteamRipApp.Core
             set {
                 if (_isInProgress == value) return;
                 _isInProgress = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsInProgress)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ShowProgressOverlay)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ShowLaunchButton)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ShowBackupButton)));
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ShowMoveButton)));
+                OnPropertyChanged(nameof(IsInProgress));
+                OnPropertyChanged(nameof(ShowProgressOverlay));
+                OnPropertyChanged(nameof(ProgressPhase));
+                OnPropertyChanged(nameof(ProgressPercentage));
+                OnPropertyChanged(nameof(ProgressDetails));
             }
         }
 
@@ -217,7 +217,7 @@ namespace SteamRipApp.Core
             set {
                 if (_progressPhase == value) return;
                 _progressPhase = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ProgressPhase)));
+                OnPropertyChanged(nameof(ProgressPhase));
             }
         }
 
@@ -227,7 +227,7 @@ namespace SteamRipApp.Core
             set {
                 if (_progressPercentage == value) return;
                 _progressPercentage = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ProgressPercentage)));
+                OnPropertyChanged(nameof(ProgressPercentage));
             }
         }
 
@@ -237,7 +237,7 @@ namespace SteamRipApp.Core
             set {
                 if (_progressDetails == value) return;
                 _progressDetails = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ProgressDetails)));
+                OnPropertyChanged(nameof(ProgressDetails));
             }
         }
 
@@ -245,8 +245,8 @@ namespace SteamRipApp.Core
 
         private void NotifyAll()
         {
-
-            foreach (var prop in new[] {
+            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+            var props = new[] {
                 nameof(SteamAppId), nameof(IsSteamIntegrated), nameof(HasAppId),
                 nameof(ShowResolveButton), nameof(ShowImportButton), nameof(ShowIntegratedGroup),
                 nameof(ShowPatchWarning), nameof(IsEmulatorApplied), nameof(HasMissingRedists),
@@ -255,9 +255,33 @@ namespace SteamRipApp.Core
                 nameof(LaunchButtonText), nameof(DisplayVersion), nameof(IsAdvancedRepairVisible),
                 nameof(IsInProgress), nameof(ProgressPhase), nameof(ProgressPercentage),
                 nameof(ProgressDetails), nameof(EstimatedTime), nameof(ShowProgressOverlay)
-            })
+            };
+
+            if (dispatcher != null && !dispatcher.HasThreadAccess)
             {
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(prop));
+                dispatcher.TryEnqueue(() =>
+                {
+                    foreach (var prop in props)
+                        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(prop));
+                });
+            }
+            else
+            {
+                foreach (var prop in props)
+                    PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(prop));
+            }
+        }
+
+        private void OnPropertyChanged(string name)
+        {
+            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+            if (dispatcher != null && !dispatcher.HasThreadAccess)
+            {
+                dispatcher.TryEnqueue(() => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name)));
+            }
+            else
+            {
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
             }
         }
 
@@ -266,7 +290,7 @@ namespace SteamRipApp.Core
             get => _localImagePath;
             set {
                 _localImagePath = value;
-                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LocalImagePath)));
+                OnPropertyChanged(nameof(ShowProgressOverlay));
             }
         }
 
