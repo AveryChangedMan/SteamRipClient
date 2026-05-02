@@ -17,7 +17,6 @@ namespace SteamRipApp.Core
                     Directory.CreateDirectory(dir);
                 }
 
-                
                 Log("=================================================");
                 Log($"[SESSION] Started at {DateTime.Now}");
                 Log("=================================================");

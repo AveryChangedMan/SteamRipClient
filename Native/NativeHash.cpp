@@ -27,7 +27,6 @@ static inline uint64_t XXH64_mergeRound(uint64_t acc, uint64_t val) {
     return acc;
 }
 
-
 struct XXH64_State {
     uint64_t v1, v2, v3, v4;
     uint64_t totalLen;
@@ -90,7 +89,7 @@ static uint64_t XXH64_Digest(const XXH64_State* state) {
         h64 = XXH64_mergeRound(h64, state->v3);
         h64 = XXH64_mergeRound(h64, state->v4);
     } else {
-        h64 = state->v3 + XXH_PRIME64_5; 
+        h64 = state->v3 + XXH_PRIME64_5;
     }
 
     h64 += state->totalLen;
@@ -131,22 +130,58 @@ extern "C" {
         HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (hFile == INVALID_HANDLE_VALUE) return (int)GetLastError();
 
+        LARGE_INTEGER fileSize;
+        if (!GetFileSizeEx(hFile, &fileSize)) {
+            CloseHandle(hFile);
+            return (int)GetLastError();
+        }
+
         XXH64_State state;
         XXH64_Reset(&state, 0);
 
-        const size_t bufferSize = 1024 * 1024; 
-        uint8_t* buffer = (uint8_t*)malloc(bufferSize);
-        if (!buffer) { CloseHandle(hFile); return -1; }
+        if (fileSize.QuadPart == 0) {
+            *outHash = XXH64_Digest(&state);
+            CloseHandle(hFile);
+            return 0;
+        }
 
-        DWORD bytesRead;
-        BOOL success;
-        while ((success = ReadFile(hFile, buffer, (DWORD)bufferSize, &bytesRead, NULL)) && bytesRead > 0) {
-            XXH64_Update(&state, buffer, bytesRead);
+        HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+        if (hMapping == NULL) {
+            CloseHandle(hFile);
+            return (int)GetLastError();
+        }
+
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+        const uint64_t allocationGranularity = sysInfo.dwAllocationGranularity;
+        const uint64_t chunkSize = 512 * 1024 * 1024;
+
+        uint64_t offset = 0;
+        while (offset < (uint64_t)fileSize.QuadPart) {
+            uint64_t remaining = (uint64_t)fileSize.QuadPart - offset;
+            uint64_t viewSize = (remaining < chunkSize) ? remaining : chunkSize;
+
+            uint64_t alignedOffset = (offset / allocationGranularity) * allocationGranularity;
+            uint32_t alignmentDist = (uint32_t)(offset - alignedOffset);
+            uint64_t fullViewSize = viewSize + alignmentDist;
+
+            const uint8_t* fileData = (const uint8_t*)MapViewOfFile(hMapping, FILE_MAP_READ, (DWORD)(alignedOffset >> 32), (DWORD)(alignedOffset & 0xFFFFFFFF), (SIZE_T)fullViewSize);
+
+            if (fileData == NULL) {
+                CloseHandle(hMapping);
+                CloseHandle(hFile);
+                return (int)GetLastError();
+            }
+
+            XXH64_Update(&state, fileData + alignmentDist, (size_t)viewSize);
+
+            UnmapViewOfFile(fileData);
+            offset += viewSize;
         }
 
         *outHash = XXH64_Digest(&state);
 
-        free(buffer);
+        CloseHandle(hMapping);
         CloseHandle(hFile);
         return 0;
     }

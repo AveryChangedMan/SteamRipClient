@@ -31,12 +31,11 @@
             <FontIcon Glyph="&#xE7E8;" FontSize="32" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
             <StackPanel>
                 <TextBlock Text="Steam Integration" FontSize="24" FontWeight="Bold"/>
-                <TextBlock Text="Inject your SteamRip library directly into Steam with full artwork." 
+                <TextBlock Text="Inject your SteamRip library directly into Steam with full artwork."
                            FontSize="13" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}"/>
             </StackPanel>
         </StackPanel>
 
-        
         <Border Grid.Row="1" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}" Padding="16" CornerRadius="8" Margin="0,0,0,24">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -45,17 +44,17 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="12">
                     <FontIcon Glyph="&#xE946;" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
-                    <TextBlock Text="Steam will be restarted if not closed already during the integration process." 
+                    <TextBlock Text="Steam will be restarted if not closed already during the integration process."
                                VerticalAlignment="Center" FontWeight="SemiBold"/>
                 </StackPanel>
-                <Button x:Name="UpdateSteamBtn" Grid.Column="1" Content="Update Steam with changes" 
-                        Style="{StaticResource AccentButtonStyle}" 
+                <Button x:Name="UpdateSteamBtn" Grid.Column="1" Content="Update Steam with changes"
+                        Style="{StaticResource AccentButtonStyle}"
                         Click="UpdateSteam_Click"
                         Visibility="Collapsed"/>
             </Grid>
         </Border>
 
-        <GridView x:Name="SteamGameGrid" Grid.Row="2" Margin="0,16,0,0" 
+        <GridView x:Name="SteamGameGrid" Grid.Row="2" Margin="0,16,0,0"
                   SelectionMode="Multiple"
                   IsItemClickEnabled="True">
             <GridView.ItemTemplate>
@@ -67,12 +66,10 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        
                         <Border Height="280" CornerRadius="16,16,0,0" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
                             <Grid>
                                 <Image Stretch="UniformToFill" Source="{Binding LocalImagePath}"/>
-                                
-                                
+
                                 <Rectangle VerticalAlignment="Top" Height="60">
                                     <Rectangle.Fill>
                                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -82,7 +79,6 @@
                                     </Rectangle.Fill>
                                 </Rectangle>
 
-                                
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8" Spacing="6">
                                     <Border Visibility="{Binding ShowResolveButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                                             Padding="10,4" Background="#E17C00" CornerRadius="20" BorderBrush="#FFC107" BorderThickness="1">
@@ -91,37 +87,27 @@
                                             <TextBlock Text="NO APPID" FontSize="9" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Border>
-                                    
-                                    <Border Visibility="{Binding ShowPatchWarning, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                            Padding="10,4" Background="#CC3333" CornerRadius="20" BorderBrush="#FF5555" BorderThickness="1">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <FontIcon Glyph="&#xE7BA;" FontSize="10" Foreground="White"/>
-                                            <TextBlock Text="UNPATCHED" FontSize="9" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </Border>
+
                                 </StackPanel>
                             </Grid>
                         </Border>
-                        
-                        
+
                         <StackPanel Grid.Row="1" Padding="14" Spacing="12">
-                            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15" 
-                                       MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" 
+                            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15"
+                                       MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                                        HorizontalAlignment="Left" Height="40"/>
-                            
-                            
+
                             <Grid>
-                                
-                                <Button Content="IMPORT TO STEAM" 
+
+                                <Button Content="IMPORT TO STEAM"
                                         Visibility="{Binding ShowImportButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                                         Style="{StaticResource AccentButtonStyle}"
                                         HorizontalAlignment="Stretch" Padding="0,10" FontWeight="Bold"
                                         Click="ImportToSteam_Click"
                                         Tag="{Binding RootPath}"
                                         CornerRadius="8"/>
-                                
-                                
-                                <Button Content="RESOLVE APPID" 
+
+                                <Button Content="RESOLVE APPID"
                                         Visibility="{Binding ShowResolveButton, Converter={StaticResource BooleanToVisibilityConverter}}"
                                         Background="#333333" Foreground="White"
                                         HorizontalAlignment="Stretch" Padding="0,10" FontWeight="Bold"
@@ -129,15 +115,14 @@
                                         Tag="{Binding RootPath}"
                                         CornerRadius="8"/>
 
-                                
                                 <StackPanel Visibility="{Binding ShowIntegratedGroup, Converter={StaticResource BooleanToVisibilityConverter}}" Spacing="8">
-                                    <Button Content="REIMPORT ARTWORK" 
+                                    <Button Content="REIMPORT ARTWORK"
                                             Background="{ThemeResource SystemControlBackgroundBaseLowBrush}"
                                             HorizontalAlignment="Stretch" Padding="0,8" FontWeight="SemiBold"
                                             Click="ImportToSteam_Click"
                                             Tag="{Binding RootPath}"
                                             CornerRadius="6" FontSize="11"/>
-                                    <Button Content="Remove Integration" 
+                                    <Button Content="Remove Integration"
                                             Background="Transparent" BorderThickness="1" BorderBrush="#44FFFFFF" Foreground="#FF6666"
                                             HorizontalAlignment="Stretch" Padding="0,4" FontSize="10"
                                             Click="RemoveFromSteam_Click"
@@ -151,17 +136,16 @@
             </GridView.ItemTemplate>
         </GridView>
 
-        
         <Grid x:Name="AppIdSearchOverlay" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="4"/>
-        <Grid x:Name="AppIdSearchDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}" 
-              Width="800" Height="550" CornerRadius="12" Padding="24" Visibility="Collapsed" Grid.RowSpan="4" 
+        <Grid x:Name="AppIdSearchDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}"
+              Width="800" Height="550" CornerRadius="12" Padding="24" Visibility="Collapsed" Grid.RowSpan="4"
               HorizontalAlignment="Center" VerticalAlignment="Center" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            
+
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,20">
                 <SymbolIcon Symbol="Find" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
                 <TextBlock x:Name="AppIdDialogTitle" Text="Resolve Steam AppID" FontSize="20" FontWeight="Bold"/>
@@ -173,23 +157,21 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                
                 <StackPanel Spacing="16" Padding="0,0,20,0" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="0,0,1,0">
                     <TextBlock Text="Manual Entry" FontWeight="SemiBold"/>
                     <TextBox x:Name="ManualAppIdInput" PlaceholderText="Enter numeric AppID..." Header="Steam AppID"/>
                     <Button Content="Assign ID Manually" HorizontalAlignment="Stretch" Click="AssignManualId_Click"/>
-                    
-                    <TextBlock Text="Tip: You can find the AppID in the URL of the game's Steam Store page." 
+
+                    <TextBlock Text="Tip: You can find the AppID in the URL of the game's Steam Store page."
                                FontSize="12" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" TextWrapping="Wrap" Margin="0,20,0,0"/>
                 </StackPanel>
 
-                
                 <StackPanel Grid.Column="1" Spacing="12" Padding="20,0,0,0">
                     <TextBlock Text="Search Steam Store" FontWeight="SemiBold"/>
                     <AutoSuggestBox x:Name="SteamSearchBox" PlaceholderText="Search for the game name..."
                                     QuerySubmitted="SteamSearchBox_QuerySubmitted"
                                     UpdateTextOnSelect="False"/>
-                    
+
                     <ListView x:Name="SteamSearchResultsList" Height="300" SelectionMode="Single"
                               SelectionChanged="SteamSearchResultsList_SelectionChanged">
                         <ListView.ItemTemplate>
@@ -210,18 +192,18 @@
                     <ProgressRing x:Name="SteamSearchLoading" IsActive="False"/>
                 </StackPanel>
             </Grid>
-            
+
             <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,16,0,0">
                 <Button Content="Cancel" Click="AppIdCancelBtn_Click"/>
-                <Button x:Name="AppIdConfirmBtn" Content="Use Selected ID" Style="{StaticResource AccentButtonStyle}" 
+                <Button x:Name="AppIdConfirmBtn" Content="Use Selected ID" Style="{StaticResource AccentButtonStyle}"
                         IsEnabled="False" Click="AppIdConfirmBtn_Click"/>
             </StackPanel>
         </Grid>
 
-        <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="0,12,0,0" 
+        <TextBlock x:Name="StatusLabel" Grid.Row="3" Margin="0,12,0,0"
                    HorizontalAlignment="Center" FontWeight="SemiBold"/>
 
-        <ProgressRing x:Name="LoadingRing" Grid.Row="2" Width="60" Height="60" 
+        <ProgressRing x:Name="LoadingRing" Grid.Row="2" Width="60" Height="60"
                       IsActive="False" VerticalAlignment="Center" HorizontalAlignment="Center"/>
     </Grid>
 </Page>

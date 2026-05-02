@@ -12,27 +12,26 @@ namespace SteamRipApp.Core
 {
     public class RedistDetectionEngine
     {
-        private Dictionary<string, string> _installedSoftware;
+        private Dictionary<string, string> _installedSoftware = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public RedistDetectionEngine()
         {
-            
+            RefreshInstalledSoftware();
+        }
+
+        public void RefreshInstalledSoftware()
+        {
+
             _installedSoftware = GetAllInstalledSoftware();
         }
 
         #region Public API
 
-        
-        
-        
-        
-        
         public (bool IsInstalled, string Version) ValidateInstallation(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return (false, "Invalid Input");
             string lowerInput = input.ToLower();
 
-            
             if (lowerInput.EndsWith(".msi"))
             {
                 var msiInfo = GetMsiInfo(input);
@@ -44,35 +43,29 @@ namespace SteamRipApp.Core
                             return (true, entry.Value);
                     }
                 }
-                
-                
+
                 if (lowerInput.Contains("gfwl")) return CheckMsiGuid("{F350798C-D8D8-44A5-8022-834F941914CB}");
                 if (lowerInput.Contains("msxml4")) return CheckMsiGuid("{716E0306-8318-4364-8B35-29E385A92844}");
             }
 
-            
             if (lowerInput.Contains("dotnet") || lowerInput.Contains("ndp"))
             {
                 var dotNetResult = CheckDotNet(lowerInput);
                 if (dotNetResult.IsInstalled) return dotNetResult;
             }
 
-            
             var pathResult = CheckPathBasedComponents(lowerInput);
             if (pathResult.IsInstalled) return pathResult;
 
-            
             var vcResult = CheckVisualCpp(input);
             if (vcResult.IsInstalled) return vcResult;
 
-            
             if (lowerInput.Contains("aio"))
             {
                 if (_installedSoftware.Keys.Any(k => k.Contains("2015-2022") || k.Contains("VisualCppRedist AIO")))
                     return (true, "Verified via Components");
             }
 
-            
             string cleanName = Path.GetFileNameWithoutExtension(input).Replace("_", " ").Replace("-", " ").Replace("setup", "", StringComparison.OrdinalIgnoreCase).Trim();
             if (cleanName.Length > 3)
             {
@@ -90,10 +83,6 @@ namespace SteamRipApp.Core
 
         #region Internal Audit Logic
 
-        
-        
-        
-        
         private (bool IsInstalled, string Version) CheckPathBasedComponents(string input)
         {
             string windir = Environment.GetEnvironmentVariable("windir") ?? @"C:\Windows";
@@ -102,17 +91,57 @@ namespace SteamRipApp.Core
 
             var paths = new Dictionary<string, string[]>
             {
-                { "oal", new[] { Path.Combine(windir, @"System32\OpenAL32.dll"), Path.Combine(windir, @"SysWOW64\OpenAL32.dll") } },
                 { "dx", new[] { Path.Combine(windir, @"System32\d3dx9_43.dll"), Path.Combine(windir, @"SysWOW64\d3dx9_43.dll") } },
                 { "msxml6", new[] { Path.Combine(windir, @"System32\msxml6.dll") } },
                 { "msxml4", new[] { Path.Combine(windir, @"SysWOW64\msxml4.dll") } },
                 { "vdf", new[] { Path.Combine(windir, @"System32\drivers\vdf.sys") } },
                 { "vulkan", new[] { Path.Combine(windir, @"System32\vulkan-1.dll") } },
-                { "xna", new[] { Path.Combine(windir, @"Microsoft.NET\assembly\GAC_MSIL\Microsoft.Xna.Framework") } },
+                { "xna", new[] {
+                    Path.Combine(windir, @"Microsoft.NET\assembly\GAC_MSIL\Microsoft.Xna.Framework"),
+                    Path.Combine(windir, @"assembly\GAC_32\Microsoft.Xna.Framework"),
+                    Path.Combine(windir, @"assembly\GAC_MSIL\Microsoft.Xna.Framework")
+                } },
                 { "physx", new[] { Path.Combine(pf86, @"NVIDIA Corporation\PhysX\Common\PhysXUpdateLoader.dll") } },
                 { "rockstar", new[] { Path.Combine(pf, @"Rockstar Games\Launcher\Launcher.exe") } },
                 { "uplay", new[] { Path.Combine(pf86, @"Ubisoft\Ubisoft Game Launcher\UbisoftConnect.exe") } }
             };
+
+            if (input.Contains("oal") || input.Contains("openal"))
+            {
+
+                if (_installedSoftware.Keys.Any(k => k.Contains("OpenAL", StringComparison.OrdinalIgnoreCase)))
+                    return (true, "Verified via Uninstall List");
+
+                using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\OpenAL"))
+                {
+                    if (key != null && key.GetValue("") != null) return (true, "Verified via Registry");
+                }
+            }
+
+            if (input.Contains("xna"))
+            {
+                string[] xnaKeys = {
+                    @"SOFTWARE\Microsoft\XNA\Framework\v4.0",
+                    @"SOFTWARE\Microsoft\XNA\Framework\v3.1",
+                    @"SOFTWARE\Microsoft\XNA\Framework\v3.0",
+                    @"SOFTWARE\Microsoft\XNA\Framework\v2.0",
+                    @"SOFTWARE\WOW6432Node\Microsoft\XNA\Framework\v4.0",
+                    @"SOFTWARE\WOW6432Node\Microsoft\XNA\Framework\v3.1",
+                    @"SOFTWARE\WOW6432Node\Microsoft\XNA\Framework\v3.0",
+                    @"SOFTWARE\WOW6432Node\Microsoft\XNA\Framework\v2.0"
+                };
+                foreach (var k in xnaKeys)
+                {
+                    using (var key = Registry.LocalMachine.OpenSubKey(k))
+                    {
+                        if (key != null && (key.GetValue("Installed")?.ToString() == "1" || key.GetValue("Install")?.ToString() == "1"))
+                            return (true, "Verified via Registry");
+                    }
+                }
+
+                if (_installedSoftware.Keys.Any(k => k.Contains("XNA Framework", StringComparison.OrdinalIgnoreCase)))
+                    return (true, "Verified via Uninstall List");
+            }
 
             foreach (var check in paths)
             {
@@ -127,20 +156,15 @@ namespace SteamRipApp.Core
             return (false, "Not Found");
         }
 
-        
-        
-        
         private (bool IsInstalled, string Version) CheckVisualCpp(string input)
         {
             string lowerInput = input.ToLower();
             string arch = lowerInput.Contains("x64") ? "x64" : "x86";
             string? year = null;
 
-            
             string ver = GetFileVersion(input);
             if (ver != null) year = VersionToYear(ver);
 
-            
             if (year == null)
             {
                 var match = Regex.Match(input, @"20\d{2}");
@@ -160,7 +184,6 @@ namespace SteamRipApp.Core
                 }
             }
 
-            
             if (year != null && int.TryParse(year.Split('-')[0], out int y) && y >= 2015)
             {
                 foreach (var entry in _installedSoftware)
@@ -182,7 +205,7 @@ namespace SteamRipApp.Core
         {
             try
             {
-                
+
                 using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"))
                 {
                     if (key != null)
@@ -191,7 +214,7 @@ namespace SteamRipApp.Core
                         if (v != null && v.StartsWith("4.")) return (true, "v" + v + " (Built-in)");
                     }
                 }
-                
+
                 string dotnetPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"dotnet\shared\Microsoft.WindowsDesktop.App");
                 if (Directory.Exists(dotnetPath))
                 {

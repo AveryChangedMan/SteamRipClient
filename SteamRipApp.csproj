@@ -10,9 +10,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);SteamRipInjector\**</DefaultItemExcludes>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <PublishUnpackaged Condition="'$(PublishUnpackaged)' == ''">true</PublishUnpackaged>
-    <WindowsPackageType Condition="'$(PublishUnpackaged)' == 'true'">None</WindowsPackageType>
-    <WindowsPackageType Condition="'$(PublishUnpackaged)' != 'true'">MSIX</WindowsPackageType>
+    <WindowsPackageType Condition="'$(GenerateAppxPackageOnBuild)' != 'true'">None</WindowsPackageType>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>false</PublishSingleFile>
@@ -23,13 +21,12 @@
     <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <AppxPackage Condition="'$(PublishUnpackaged)' == 'true'">false</AppxPackage>
-    <AppxPackage Condition="'$(PublishUnpackaged)' != 'true'">true</AppxPackage>
-    <GenerateAppxPackageOnBuild Condition="'$(PublishUnpackaged)' == 'true'">false</GenerateAppxPackageOnBuild>
-    <GenerateAppxPackageOnBuild Condition="'$(PublishUnpackaged)' != 'true'">true</GenerateAppxPackageOnBuild>
+    <AppxPackage>false</AppxPackage>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
     <PackageCertificateThumbprint>8829DFD5386F422824A49A2CFCB78E1943E56A37</PackageCertificateThumbprint>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
-    <Version>1.1.2.0</Version>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -53,7 +50,7 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.5.240311000" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
-    <PackageReference Include="SharpCompress" Version="0.38.1" />
+    <PackageReference Include="SharpCompress" Version="0.39.0" />
     <PackageReference Include="System.IO.Hashing" Version="10.0.7" />
     <PackageReference Include="System.Management" Version="10.0.6" />
   </ItemGroup>

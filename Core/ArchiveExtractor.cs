@@ -7,13 +7,10 @@ using System.Threading.Tasks;
 
 namespace SteamRipApp.Core
 {
-    
-    
-    
-    
+
     public static class ArchiveExtractor
     {
-        
+
         private static readonly string[] WinRarPaths = {
             @"C:\Program Files\WinRAR\WinRAR.exe",
             @"C:\Program Files (x86)\WinRAR\WinRAR.exe",
@@ -21,18 +18,13 @@ namespace SteamRipApp.Core
             @"C:\Program Files (x86)\WinRAR\Rar.exe",
         };
 
-        
         private static readonly string[] SevenZipPaths = {
             @"C:\Program Files\7-Zip\7z.exe",
             @"C:\Program Files (x86)\7-Zip\7z.exe",
         };
 
-        
         private static readonly Regex ProgressRegex = new Regex(@"\s*(\d{1,3})%", RegexOptions.Compiled);
 
-        
-        
-        
         public static string? FindWinRar()
         {
             foreach (var path in WinRarPaths)
@@ -47,17 +39,21 @@ namespace SteamRipApp.Core
             return null;
         }
 
-        
-        
-        
-        
-        
+        public static string? FindUnRarDLL()
+        {
+
+            string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Deps", "UnRAR64.dll");
+            if (File.Exists(localPath)) return localPath;
+            return null;
+        }
+
         public static async Task<bool> ExtractAsync(
             string archivePath,
             string outputDir,
             Action<double>? onProgress = null,
             Action<string>? onStatus = null,
-            bool deleteAfter = false)
+            bool deleteAfter = false,
+            string? gameTitle = null)
         {
             if (!File.Exists(archivePath))
             {
@@ -68,10 +64,9 @@ namespace SteamRipApp.Core
             Directory.CreateDirectory(outputDir);
             Logger.Log($"[Extract] Starting extraction of: {archivePath} → {outputDir}");
 
-            
             using var cts = new System.Threading.CancellationTokenSource();
             var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(outputDir))!);
-            const long criticalLimit = 10L * 1024 * 1024 * 1024; 
+            const long criticalLimit = 10L * 1024 * 1024 * 1024;
 
             var spaceMonitorTask = Task.Run(async () => {
                 try {
@@ -89,37 +84,64 @@ namespace SteamRipApp.Core
                 } catch (TaskCanceledException) { }
             });
 
-            var method = GlobalSettings.PreferredExtractionMethod ?? ExtractionMethod.WinRAR;
+            var method = GlobalSettings.PreferredExtractionMethod;
+            var unrarDll = FindUnRarDLL();
             var winrar = FindWinRar();
             var sevenZip = FindSevenZip();
 
             bool success = false;
 
+            var startTime = DateTime.Now;
             try {
-                if (method == ExtractionMethod.WinRAR && winrar != null)
+                if (method == ExtractionMethod.UnRarDLL && unrarDll != null)
                 {
-                    success = await ExtractWithWinRarAsync(winrar, archivePath, outputDir, onProgress, onStatus, cts.Token);
+                    success = await ExtractWithUnRarDLLAsync(unrarDll, archivePath, outputDir, onProgress, onStatus, cts.Token, gameTitle);
+
+                    var duration = DateTime.Now - startTime;
+                    var fileSize = new FileInfo(archivePath).Length;
+                    if (success && duration.TotalSeconds < 2 && fileSize > 10 * 1024 * 1024)
+                    {
+                        Logger.Log($"[ArchiveExtractor] ⚠️ UnRarDLL reported success in {duration.TotalSeconds:F1}s for {fileSize/1024/1024}MB. Suspecting silent failure, falling back...");
+                        success = false;
+                    }
                 }
-                else if (method == ExtractionMethod.SevenZip && sevenZip != null)
+
+                if (!success)
                 {
-                    success = await ExtractWithSevenZipAsync(sevenZip, archivePath, outputDir, onProgress, onStatus, cts.Token);
+                    if (winrar != null)
+                    {
+                        Logger.Log("[ArchiveExtractor] Falling back to WinRAR CLI...");
+                        success = await ExtractWithWinRarAsync(winrar, archivePath, outputDir, onProgress, onStatus, cts.Token, gameTitle);
+                    }
+                    else if (sevenZip != null)
+                    {
+                        Logger.Log("[ArchiveExtractor] Falling back to 7-Zip CLI...");
+                        success = await ExtractWithSevenZipAsync(sevenZip, archivePath, outputDir, onProgress, onStatus, cts.Token, gameTitle);
+                    }
+                    else if (method != ExtractionMethod.Windows)
+                    {
+                        Logger.Log("[ArchiveExtractor] Falling back to Windows Explorer (DotNetZip)...");
+                        success = await ExtractWithDotNetZipAsync(archivePath, outputDir, onProgress, cts.Token, gameTitle);
+                    }
                 }
-                else if (method == ExtractionMethod.Windows)
+
+                if (method == ExtractionMethod.WinRAR && winrar != null && !success)
                 {
-                    onStatus?.Invoke("📦 Extracting with Windows Explorer...");
-                    success = await ExtractWithDotNetZipAsync(archivePath, outputDir, onProgress, cts.Token);
+
+                    if (sevenZip != null) success = await ExtractWithSevenZipAsync(sevenZip, archivePath, outputDir, onProgress, onStatus, cts.Token, gameTitle);
                 }
-                else
+                else if (method == ExtractionMethod.SevenZip && sevenZip != null && !success)
                 {
-                    
-                    if (winrar != null) success = await ExtractWithWinRarAsync(winrar, archivePath, outputDir, onProgress, onStatus, cts.Token);
-                    else if (sevenZip != null) success = await ExtractWithSevenZipAsync(sevenZip, archivePath, outputDir, onProgress, onStatus, cts.Token);
-                    else success = await ExtractWithDotNetZipAsync(archivePath, outputDir, onProgress, cts.Token);
+                    if (winrar != null) success = await ExtractWithWinRarAsync(winrar, archivePath, outputDir, onProgress, onStatus, cts.Token, gameTitle);
+                }
+                else if (method == ExtractionMethod.Windows && !success)
+                {
+                    success = await ExtractWithDotNetZipAsync(archivePath, outputDir, onProgress, cts.Token, gameTitle);
                 }
             } catch (OperationCanceledException) {
                 success = false;
             } finally {
-                cts.Cancel(); 
+                cts.Cancel();
                 await spaceMonitorTask;
             }
 
@@ -129,18 +151,16 @@ namespace SteamRipApp.Core
             return success;
         }
 
-        
         private static async Task<bool> ExtractWithSevenZipAsync(
             string sevenZipPath,
             string archivePath,
             string outputDir,
             Action<double>? onProgress,
             Action<string>? onStatus,
-            System.Threading.CancellationToken ct)
+            System.Threading.CancellationToken ct,
+            string? gameTitle = null)
         {
-            
-            
-            
+
             string args = $"x \"{archivePath}\" -o\"{outputDir.TrimEnd('\\')}\" -y";
 
             Logger.Log($"[Extract] 7-Zip command: \"{sevenZipPath}\" {args}");
@@ -160,10 +180,23 @@ namespace SteamRipApp.Core
 
                 proc.OutputDataReceived += (s, e) => {
                     if (e.Data == null) return;
-                    
+
                     var match = ProgressRegex.Match(e.Data);
                     if (match.Success && double.TryParse(match.Groups[1].Value, out double pct))
+                    {
                         onProgress?.Invoke(pct);
+
+                        if (!string.IsNullOrEmpty(gameTitle))
+                        {
+                            var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.Title.Equals(gameTitle, StringComparison.OrdinalIgnoreCase));
+                            if (gf != null)
+                            {
+                                gf.IsInProgress = true;
+                                gf.ProgressPhase = "Installing...";
+                                gf.ProgressPercentage = pct;
+                            }
+                        }
+                    }
                 };
 
                 proc.Start();
@@ -186,20 +219,16 @@ namespace SteamRipApp.Core
             }
         }
 
-        
         private static async Task<bool> ExtractWithWinRarAsync(
             string winrarPath,
             string archivePath,
             string outputDir,
             Action<double>? onProgress,
             Action<string>? onStatus,
-            System.Threading.CancellationToken ct)
+            System.Threading.CancellationToken ct,
+            string? gameTitle = null)
         {
-            
-            
-            
-            
-            
+
             string args = $"x -y -o+ -ibck -p- \"{archivePath}\" \"{outputDir.TrimEnd('\\')}\\\"";
 
             Logger.Log($"[Extract] WinRAR command: \"{winrarPath}\" {args}");
@@ -224,7 +253,20 @@ namespace SteamRipApp.Core
                     Logger.Log($"[WinRAR] {e.Data}");
                     var match = ProgressRegex.Match(e.Data);
                     if (match.Success && double.TryParse(match.Groups[1].Value, out double pct))
+                    {
                         onProgress?.Invoke(pct);
+
+                        if (!string.IsNullOrEmpty(gameTitle))
+                        {
+                            var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.Title.Equals(gameTitle, StringComparison.OrdinalIgnoreCase));
+                            if (gf != null)
+                            {
+                                gf.IsInProgress = true;
+                                gf.ProgressPhase = "Installing...";
+                                gf.ProgressPercentage = pct;
+                            }
+                        }
+                    }
                 };
                 proc.ErrorDataReceived += (s, e) => {
                     if (e.Data != null) Logger.Log($"[WinRAR-ERR] {e.Data}");
@@ -234,7 +276,6 @@ namespace SteamRipApp.Core
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
 
-                
                 using (ct.Register(() => { try { proc.Kill(); } catch { } }))
                 {
                     int exitCode = await tcs.Task;
@@ -261,12 +302,12 @@ namespace SteamRipApp.Core
             }
         }
 
-        
         private static async Task<bool> ExtractWithDotNetZipAsync(
             string zipPath,
             string outputDir,
             Action<double>? onProgress,
-            System.Threading.CancellationToken ct)
+            System.Threading.CancellationToken ct,
+            string? gameTitle = null)
         {
             try {
                 return await Task.Run(() =>
@@ -280,7 +321,7 @@ namespace SteamRipApp.Core
                         if (ct.IsCancellationRequested) return false;
 
                         string dest = Path.GetFullPath(Path.Combine(outputDir, entry.FullName));
-                        if (!dest.StartsWith(Path.GetFullPath(outputDir))) continue; 
+                        if (!dest.StartsWith(Path.GetFullPath(outputDir))) continue;
                         if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
                         {
                             Directory.CreateDirectory(dest);
@@ -293,7 +334,19 @@ namespace SteamRipApp.Core
                             entryStream.CopyTo(fileStream);
                         }
                         done++;
-                        onProgress?.Invoke(done / total * 100.0);
+                        double pct = done / total * 100.0;
+                        onProgress?.Invoke(pct);
+
+                        if (!string.IsNullOrEmpty(gameTitle))
+                        {
+                            var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.Title.Equals(gameTitle, StringComparison.OrdinalIgnoreCase));
+                            if (gf != null)
+                            {
+                                gf.IsInProgress = true;
+                                gf.ProgressPhase = "Installing...";
+                                gf.ProgressPercentage = pct;
+                            }
+                        }
                     }
                     return true;
                 });
@@ -303,19 +356,58 @@ namespace SteamRipApp.Core
             }
         }
 
-        
+        private static async Task<bool> ExtractWithUnRarDLLAsync(
+            string unrarDllPath,
+            string archivePath,
+            string outputDir,
+            Action<double>? onProgress,
+            Action<string>? onStatus,
+            System.Threading.CancellationToken ct,
+            string? gameTitle = null)
+        {
+            Logger.Log($"[Extract] Using UnRAR DLL engine for: {archivePath}");
+            onStatus?.Invoke("📦 Decompressing with High-Precision Engine...");
+
+            try {
+                bool result = await UnrarEngine.ExtractAsync(archivePath, outputDir, pct => {
+                    onProgress?.Invoke(pct);
+
+                    if (!string.IsNullOrEmpty(gameTitle))
+                    {
+                        var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.Title.Equals(gameTitle, StringComparison.OrdinalIgnoreCase));
+                        if (gf != null)
+                        {
+                            gf.IsInProgress = true;
+                            gf.ProgressPhase = "Installing...";
+                            gf.ProgressPercentage = pct;
+                        }
+                    }
+                }, ct);
+
+                if (result)
+                {
+                    onProgress?.Invoke(100);
+                    onStatus?.Invoke("✅ Extraction complete");
+                }
+                return result;
+            } catch (Exception ex) {
+                Logger.LogError("UnRarDLL.Extract", ex);
+                return false;
+            }
+        }
+
         private static void DeleteArchiveSet(string primaryArchive, Action<string>? onStatus)
         {
             try {
                 var dir = Path.GetDirectoryName(primaryArchive)!;
-                var name = Path.GetFileNameWithoutExtension(primaryArchive); 
-                var ext  = Path.GetExtension(primaryArchive).ToLowerInvariant(); 
+                var name = Path.GetFileNameWithoutExtension(primaryArchive);
+                var ext  = Path.GetExtension(primaryArchive).ToLowerInvariant();
 
                 var filesToDelete = new List<string>();
 
                 if (ext == ".rar")
                 {
-                    
+
                     filesToDelete.AddRange(Directory.GetFiles(dir, $"{StripPartSuffix(name)}.part*.rar"));
                     filesToDelete.AddRange(Directory.GetFiles(dir, $"{StripPartSuffix(name)}.r[0-9][0-9]"));
                     filesToDelete.AddRange(Directory.GetFiles(dir, $"{StripPartSuffix(name)}.rar"));
@@ -340,13 +432,10 @@ namespace SteamRipApp.Core
 
         private static string StripPartSuffix(string nameWithoutExt)
         {
-            
+
             return Regex.Replace(nameWithoutExt, @"\.part\d+$", "", RegexOptions.IgnoreCase);
         }
 
-        
-        
-        
         public static List<string> FindArchiveParts(string primaryPath)
         {
             var parts = new List<string>();

@@ -39,7 +39,7 @@ namespace SteamRipApp.Core
         public object Convert(object value, Type targetType, object parameter, string language)
         {
             string? url = value as string;
-            
+
             if (string.IsNullOrWhiteSpace(url))
             {
                 return new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(PlaceholderImage));
@@ -77,7 +77,6 @@ namespace SteamRipApp.Core
         }
     }
 
-    
     public class PhaseToColorConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
@@ -102,7 +101,21 @@ namespace SteamRipApp.Core
         {
             if (value is bool isRunning && isRunning)
                 return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Red);
-            
+
+            return Application.Current.Resources["AccentFillColorDefaultBrush"];
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
+    }
+
+    public class LaunchButtonBrushConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+        {
+            if (value is GameFolder gf)
+            {
+                if (gf.HasMissingRedists || gf.IsRunning || gf.IsRepairRequired)
+                    return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Red);
+            }
             return Application.Current.Resources["AccentFillColorDefaultBrush"];
         }
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
@@ -115,6 +128,36 @@ namespace SteamRipApp.Core
             if (value is bool isRunning && isRunning)
                 return "STOP: May Cause Data Loss. Use at own risk.";
             return "Launch the game";
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
+    }
+
+    public class DoubleToStringConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+        {
+            if (value is double d) return d.ToString("F0");
+            return value?.ToString() ?? "";
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
+    }
+
+    public class PercentStringConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+        {
+            if (value is double d) return $"{d:F0}%";
+            return value?.ToString() ?? "0%";
+        }
+        public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
+    }
+    public class RunningToBorderThicknessConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+        {
+            if (value is bool isRunning && isRunning)
+                return new Thickness(2);
+            return new Thickness(0);
         }
         public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotImplementedException();
     }

@@ -37,7 +37,7 @@ namespace SteamRipApp
             openItem.Click += OpenFolderMenu_Click;
             var uninstallItem = new MenuFlyoutItem { Text = "Uninstall Game", Icon = new SymbolIcon(Symbol.Delete) };
             uninstallItem.Click += UninstallMenu_Click;
-            
+
             flyout.Items.Add(openItem);
             flyout.Items.Add(new MenuFlyoutSeparator());
             flyout.Items.Add(uninstallItem);
@@ -55,13 +55,12 @@ namespace SteamRipApp
                 .Where(m => !string.IsNullOrEmpty(m.LocalPath) && Directory.Exists(m.LocalPath))
                 .GroupBy(m => m.LocalPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar).ToLowerInvariant())
                 .Select(g => g.First())
-                .Select(m => new GameFolder { 
-                    Title = m.Title, 
-                    RootPath = m.LocalPath, 
-                    SizeBytes = m.SizeBytes 
+                .Select(m => new GameFolder {
+                    Title = m.Title,
+                    RootPath = m.LocalPath,
+                    SizeBytes = m.SizeBytes
                 }).ToList();
 
-            
             bool sizeUpdated = false;
             foreach (var g in _games.Where(x => x.SizeBytes == 0))
             {
@@ -95,19 +94,17 @@ namespace SteamRipApp
                 {
                     var allRedists = RedistService.GetRequiredRedists(game.RootPath);
                     var missing = allRedists.Where(r => !r.IsInstalled).ToList();
-                    
-                    
-                    
+
                     if (missing.Count == 0)
                     {
                         long size = GetExeOnlySize(redistPath);
                         if (size > 0)
                         {
                             totalRedistSize += size;
-                            _redistItems.Add(new RedistCleanupItem { 
-                                GameTitle = game.Title, 
-                                FolderPath = redistPath, 
-                                SizeBytes = size 
+                            _redistItems.Add(new RedistCleanupItem {
+                                GameTitle = game.Title,
+                                FolderPath = redistPath,
+                                SizeBytes = size
                             });
                             Logger.Log($"[Cleanup] Found cleanable redist in {game.Title}: {size} bytes");
                         }
@@ -142,7 +139,7 @@ namespace SteamRipApp
 
             var drives = _games.Select(g => System.IO.Path.GetPathRoot(g.RootPath)).Distinct().ToList();
             var infoLines = new List<string>();
-            
+
             long totalUsedOnAllDrivesByGames = 0;
             long totalCapacityOnAllRelevantDrives = 0;
 
@@ -153,17 +150,17 @@ namespace SteamRipApp
                     DriveInfo di = new DriveInfo(dRoot);
                     long gameSizeOnDrive = _games.Where(g => System.IO.Path.GetPathRoot(g.RootPath) == dRoot).Sum(g => g.SizeBytes);
                     infoLines.Add($"{dRoot} {FormatSize(di.AvailableFreeSpace)} Free / {FormatSize(di.TotalSize)} Total (Games: {FormatSize(gameSizeOnDrive)})");
-                    
+
                     totalUsedOnAllDrivesByGames += gameSizeOnDrive;
                     totalCapacityOnAllRelevantDrives += di.TotalSize;
                 } catch { }
             }
 
             DriveInfoText.Text = string.Join(" | ", infoLines);
-            
+
             double usedPct = (totalUsedOnAllDrivesByGames * 100.0 / (totalCapacityOnAllRelevantDrives > 0 ? totalCapacityOnAllRelevantDrives : 1));
             UsedPercentageText.Text = $"{usedPct:F1}% Used by Games";
-            
+
             StorageProgressBar.Maximum = totalCapacityOnAllRelevantDrives;
             StorageProgressBar.Value = totalUsedOnAllDrivesByGames;
             StorageProgressBar.Foreground = new SolidColorBrush(Microsoft.UI.Colors.MediumSeaGreen);
@@ -187,12 +184,12 @@ namespace SteamRipApp
                                    .ToList();
 
             var driveBaseColors = new List<Color> {
-                Color.FromArgb(255, 60, 120, 216),  
-                Color.FromArgb(255, 230, 70, 70),   
-                Color.FromArgb(255, 60, 180, 75),   
-                Color.FromArgb(255, 255, 225, 25),  
-                Color.FromArgb(255, 145, 30, 180),  
-                Color.FromArgb(255, 70, 240, 240)   
+                Color.FromArgb(255, 60, 120, 216),
+                Color.FromArgb(255, 230, 70, 70),
+                Color.FromArgb(255, 60, 180, 75),
+                Color.FromArgb(255, 255, 225, 25),
+                Color.FromArgb(255, 145, 30, 180),
+                Color.FromArgb(255, 70, 240, 240)
             };
 
             double centerX = StoragePieCanvas.Width / 2;
@@ -210,7 +207,6 @@ namespace SteamRipApp
                     double sweepAngle = (game.SizeBytes / (double)totalSize) * 360.0;
                     if (sweepAngle < 0.2) sweepAngle = 0.2;
 
-                    
                     double factor = 1.0;
                     if (group.Games.Count > 1)
                         factor = 0.75 + (0.5 * (i / (double)(group.Games.Count - 1)));
@@ -262,13 +258,12 @@ namespace SteamRipApp
             path.Stroke = new SolidColorBrush(Microsoft.UI.Colors.Black);
             path.StrokeThickness = 0.5;
 
-            
             path.PointerEntered += (s, e) => {
                 path.Opacity = 0.8;
                 ToolTipService.SetToolTip(path, $"{game.Title}\n{FormatSize(game.SizeBytes)}");
             };
             path.PointerExited += (s, e) => path.Opacity = 1.0;
-            
+
             path.ContextRequested += (s, e) => {
                 _selectedGameFromChart = game;
                 e.TryGetPosition(path, out Point pos);
@@ -319,13 +314,12 @@ namespace SteamRipApp
                 XamlRoot = this.XamlRoot
             };
 
-            var result = await dialog.ShowAsync();
+            var result = await App.ShowDialogSafeAsync(dialog);
             if (result != ContentDialogResult.Primary) return;
 
             try {
                 Logger.Log($"[Cleanup] Uninstalling from pie chart: {gf.Title}");
-                
-                
+
                 var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath == gf.RootPath);
                 if (meta != null && meta.IsSteamIntegrated)
                 {
@@ -341,7 +335,7 @@ namespace SteamRipApp
 
                 if (meta != null) GlobalSettings.Library.Remove(meta);
                 GlobalSettings.Save();
-                
+
                 await RefreshAll();
             } catch (Exception ex) {
                 Logger.LogError("CleanupUninstall", ex);
@@ -357,13 +351,12 @@ namespace SteamRipApp
                 {
                     if (Directory.Exists(item.FolderPath))
                     {
-                        
+
                         RedistService.UpdateRedistManifest(item.FolderPath);
-                        
+
                         var exes = Directory.GetFiles(item.FolderPath, "*.exe", SearchOption.AllDirectories)
                             .Concat(Directory.GetFiles(item.FolderPath, "*.msi", SearchOption.AllDirectories));
 
-                        
                         foreach (var exe in exes)
                         {
                             try {
@@ -375,7 +368,7 @@ namespace SteamRipApp
                         }
                     }
                 }
-                
+
                 Logger.Log($"[Cleanup] Cleaned {count} redist installers, saved {(totalSaved / 1024.0 / 1024.0):F1} MB. Manifests created.");
                 _ = RefreshAll();
             } catch (Exception ex) {

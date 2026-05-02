@@ -42,20 +42,19 @@ namespace SteamRipApp.Core
 
                 if (fs.Length < 10) return shortcuts;
 
-                
                 if (br.ReadByte() != TYPE_MAP) return shortcuts;
-                ReadNullTerminatedString(br); 
+                ReadNullTerminatedString(br);
 
-                while (fs.Position < fs.Length - 1) 
+                while (fs.Position < fs.Length - 1)
                 {
                     byte type = br.ReadByte();
-                    if (type == TYPE_END) break; 
+                    if (type == TYPE_END) break;
 
                     if (type == TYPE_MAP)
                     {
-                        ReadNullTerminatedString(br); 
+                        ReadNullTerminatedString(br);
                         var shortcut = new SteamShortcut();
-                        
+
                         while (true)
                         {
                             byte subType = br.ReadByte();
@@ -92,7 +91,7 @@ namespace SteamRipApp.Core
                             {
                                 while (br.ReadByte() != TYPE_END)
                                 {
-                                    ReadNullTerminatedString(br); 
+                                    ReadNullTerminatedString(br);
                                     shortcut.Tags.Add(ReadNullTerminatedString(br));
                                 }
                             }
@@ -121,7 +120,6 @@ namespace SteamRipApp.Core
                     bw.Write(TYPE_MAP);
                     WriteNullTerminatedString(bw, i.ToString());
 
-                    
                     WriteIntProperty(bw, "appid", (int)s.AppID);
 
                     WriteStringProperty(bw, "AppName", s.AppName);
@@ -146,13 +144,13 @@ namespace SteamRipApp.Core
                         WriteNullTerminatedString(bw, j.ToString());
                         WriteNullTerminatedString(bw, s.Tags[j]);
                     }
-                    bw.Write(TYPE_END); 
+                    bw.Write(TYPE_END);
 
-                    bw.Write(TYPE_END); 
+                    bw.Write(TYPE_END);
                 }
 
-                bw.Write(TYPE_END); 
-                bw.Write(TYPE_END); 
+                bw.Write(TYPE_END);
+                bw.Write(TYPE_END);
             } catch (Exception ex) {
                 Logger.LogError("WriteVdf", ex);
             }
@@ -197,10 +195,6 @@ namespace SteamRipApp.Core
             }
         }
 
-        
-        
-        
-        
         public static bool FlipIsHidden(string vdfPath, string targetAppName, bool hidden)
         {
             try {
@@ -208,17 +202,12 @@ namespace SteamRipApp.Core
                 byte[] nameBytes = Encoding.UTF8.GetBytes(targetAppName);
                 byte[] hiddenKey = Encoding.UTF8.GetBytes("IsHidden");
 
-                
                 int namePos = FindBytePattern(vdfData, nameBytes);
                 if (namePos == -1) return false;
 
-                
                 int hiddenPos = FindBytePattern(vdfData, hiddenKey, namePos);
                 if (hiddenPos == -1) return false;
 
-                
-                
-                
                 int valueIndex = hiddenPos + hiddenKey.Length + 1;
                 if (valueIndex >= vdfData.Length) return false;
 

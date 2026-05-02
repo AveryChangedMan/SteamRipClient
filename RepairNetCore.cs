@@ -11,8 +11,6 @@ using SharpCompress.Common;
 using SharpCompress.Readers;
 using SharpCompress.Readers.Rar;
 
-
-
 namespace RarSurgicalRepair
 {
     public class RarMapEntry
@@ -22,7 +20,7 @@ namespace RarSurgicalRepair
         public long DataOffset { get; set; }
         public long CompressedSize { get; set; }
         public long UncompressedSize { get; set; }
-        public string RarVersion { get; set; } = string.Empty; 
+        public string RarVersion { get; set; } = string.Empty;
     }
 
     public class RarSurgicalRepairer
@@ -33,25 +31,19 @@ namespace RarSurgicalRepair
         public RarSurgicalRepairer(HttpClient? httpClient = null)
         {
             _httpClient = httpClient ?? new HttpClient();
-            
+
             _httpClient.DefaultRequestHeaders.ConnectionClose = false;
         }
 
-        
-        
-        
-        
         public async Task<List<RarMapEntry>> MapRemoteArchiveAsync(string url, string tempPath = "temp_mapping.rar", IProgress<double>? progress = null)
         {
             try
             {
-                
+
                 await DownloadFileWithProgressAsync(url, tempPath, progress);
 
-                
                 var mapping = MapLocalArchive(tempPath);
 
-                
                 if (File.Exists(tempPath))
                 {
                     File.Delete(tempPath);
@@ -65,55 +57,29 @@ namespace RarSurgicalRepair
             }
         }
 
-        
-        
-        
         public List<RarMapEntry> MapLocalArchive(string filePath)
         {
             var mapping = new List<RarMapEntry>();
-            
 
             using (Stream stream = File.OpenRead(filePath))
             {
-                
+
                 using (var reader = RarReader.Open(stream))
                 {
                     while (reader.MoveToNextEntry())
                     {
                         if (reader.Entry.IsDirectory) continue;
 
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
                         long dataOffset = stream.Position;
                         long compressedSize = reader.Entry.CompressedSize;
-                        
-                        
-                        
-                        
-                        
+
                     }
                 }
             }
-            
-            
-            
+
             return PerformDeepMapping(filePath, out _archivePrefix);
         }
 
-        
-        
-        
-        
         private List<RarMapEntry> PerformDeepMapping(string filePath, out byte[] prefix)
         {
             var entries = new List<RarMapEntry>();
@@ -121,14 +87,14 @@ namespace RarSurgicalRepair
 
             using (Stream stream = File.OpenRead(filePath))
             {
-                
+
                 using (var reader = RarReader.Open(stream))
                 {
                     while (true)
                     {
                         long headerOffset = stream.Position;
                         if (!reader.MoveToNextEntry()) break;
-                        
+
                         if (reader.Entry.IsDirectory) continue;
 
                         long dataOffset = stream.Position;
@@ -150,7 +116,6 @@ namespace RarSurgicalRepair
                     }
                 }
 
-                
                 if (firstFileOffset > 0)
                 {
                     stream.Position = 0;
@@ -172,12 +137,9 @@ namespace RarSurgicalRepair
             return entries;
         }
 
-        
-        
-        
         public async Task DownloadFileSurgicallyAsync(string url, RarMapEntry entry, string destinationPath, CancellationToken ct = default)
         {
-            
+
             long rangeStart = entry.HeaderOffset;
             long rangeEnd = entry.DataOffset + entry.CompressedSize - 1;
 
@@ -189,19 +151,17 @@ namespace RarSurgicalRepair
                 response.EnsureSuccessStatusCode();
                 var chunkData = await response.Content.ReadAsByteArrayAsync();
 
-                
                 using (var ms = new MemoryStream())
                 {
                     ms.Write(_archivePrefix, 0, _archivePrefix.Length);
                     ms.Write(chunkData, 0, chunkData.Length);
                     ms.Position = 0;
 
-                    
                     using (var reader = RarReader.Open(ms))
                     {
                         while (reader.MoveToNextEntry())
                         {
-                            
+
                             string? destDir = Path.GetDirectoryName(destinationPath);
                             if (destDir != null)
                             {
@@ -214,9 +174,6 @@ namespace RarSurgicalRepair
             }
         }
 
-        
-        
-        
         private async Task DownloadFileWithProgressAsync(string url, string destPath, IProgress<double>? progress)
         {
             using (var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
@@ -227,7 +184,7 @@ namespace RarSurgicalRepair
                 using (var fs = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None))
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 {
-                    var buffer = new byte[128 * 1024]; 
+                    var buffer = new byte[128 * 1024];
                     long totalRead = 0;
                     int read;
                     while ((read = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)

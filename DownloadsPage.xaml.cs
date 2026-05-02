@@ -10,47 +10,44 @@ namespace SteamRipApp
 {
     public sealed partial class DownloadsPage : Page
     {
-        public ObservableCollection<ActiveDownloadMetadata> ActiveDownloads { get; } = new ObservableCollection<ActiveDownloadMetadata>();
-
         public DownloadsPage()
         {
             this.InitializeComponent();
-            this.Loaded += (s, e) => RefreshDownloads();
+            this.Loaded += async (s, e) => {
+
+                RefreshDownloads();
+
+                await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories);
+
+                RefreshDownloads();
+            };
         }
 
+        private async void RefreshScan_Click(object sender, RoutedEventArgs e)
+        {
+            if (RefreshScanBtn != null) RefreshScanBtn.IsEnabled = false;
+            await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories);
+            RefreshDownloads();
+            if (RefreshScanBtn != null) RefreshScanBtn.IsEnabled = true;
+        }
         private void RefreshDownloads()
         {
             try {
                 if (GlobalSettings.ActiveDownloads == null) return;
 
-                
-                var snapshot = GlobalSettings.ActiveDownloads.ToList();
-                
-                ActiveDownloads.Clear();
-                
-                for (int i = snapshot.Count - 1; i >= 0; i--)
+                foreach (var dl in GlobalSettings.ActiveDownloads)
                 {
-                    var dl = snapshot[i];
-                    if (dl != null)
-                    {
-                        dl.Title ??= "Unknown";
-                        dl.Status ??= "";
-                        dl.Phase ??= "Downloading";
-                        dl.ImageUrl ??= "";
-                        dl.DestPath ??= "";
-                        
-                        
-                        dl.IsInLibrary = GlobalSettings.Library.Any(m => m.Title.Equals(dl.Title, StringComparison.OrdinalIgnoreCase) || 
-                                                                        m.Title.Equals(ScannerEngine.CleanTitle(dl.Title), StringComparison.OrdinalIgnoreCase));
-                        dl.NotifyAll();
-                        ActiveDownloads.Add(dl);
-                    }
+                    if (dl == null) continue;
+                    dl.IsInLibrary = GlobalSettings.Library.Any(m =>
+                        m.Title.Equals(dl.Title, StringComparison.OrdinalIgnoreCase) ||
+                        m.Title.Equals(ScannerEngine.CleanTitle(dl.Title), StringComparison.OrdinalIgnoreCase));
+                    dl.NotifyAll();
                 }
 
-                if (DownloadsList.ItemsSource == null)
-                    DownloadsList.ItemsSource = ActiveDownloads;
+                if (DownloadsList.ItemsSource != GlobalSettings.ActiveDownloads)
+                    DownloadsList.ItemsSource = GlobalSettings.ActiveDownloads;
 
-                EmptyLabel.Visibility = ActiveDownloads.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                EmptyLabel.Visibility = GlobalSettings.ActiveDownloads.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             } catch (Exception ex) {
                 Logger.LogError("DownloadsPage.Refresh", ex);
             }
@@ -66,14 +63,7 @@ namespace SteamRipApp
         {
             if (sender is not Button btn || btn.Tag is not string pageUrl) return;
 
-            var mw = (Application.Current as App)?.m_window as MainWindow;
-            mw?.NavigateToHome();
-            
-            
-            
-            
-            
-            var dl = ActiveDownloads.FirstOrDefault(d => d.PageUrl == pageUrl);
+            var dl = GlobalSettings.ActiveDownloads.FirstOrDefault(d => d.PageUrl == pageUrl);
             if (dl != null)
             {
                 dl.Phase = "Downloading";
@@ -87,7 +77,6 @@ namespace SteamRipApp
         {
             if (sender is not Button btn || btn.Tag is not string destPath) return;
 
-            
             var icon = FindChild<SymbolIcon>(btn);
 
             if (CustomDownloader.ActiveInstances.TryGetValue(destPath, out var downloader))
@@ -97,22 +86,26 @@ namespace SteamRipApp
                 if (downloader.State == DownloadState.Downloading)
                 {
                     downloader.Pause();
-                    if (icon != null) icon.Symbol = Symbol.Play;
-                    if (dl != null) dl.Status = "⏸ Paused";
+                    if (dl != null) {
+                        dl.IsPaused = true;
+                        dl.Status = "⏸ Paused";
+                    }
                 }
                 else if (downloader.State == DownloadState.Paused)
                 {
                     downloader.Resume();
-                    if (icon != null) icon.Symbol = Symbol.Pause;
-                    if (dl != null) dl.Status = "▶ Resuming...";
+                    if (dl != null) {
+                        dl.IsPaused = false;
+                        dl.Status = "▶ Resuming...";
+                    }
                 }
             }
-            else 
+            else
             {
                 var dl = GlobalSettings.ActiveDownloads.FirstOrDefault(d => d.DestPath == destPath);
                 if (dl != null)
                 {
-                    if (icon != null) icon.Symbol = Symbol.Pause;
+                    dl.IsPaused = false;
                     dl.Status = "🔄 Resuming...";
                     ResumeOrphanedDownload(dl);
                 }
@@ -122,15 +115,55 @@ namespace SteamRipApp
         private async void ResumeOrphanedDownload(ActiveDownloadMetadata dl)
         {
             try {
+                if (dl.Phase == "Extracting" || string.IsNullOrEmpty(dl.SourceUrl))
+                {
+                    _ = RunExtractionOnlyAsync(dl);
+                    return;
+                }
+
+                var session = DownloadSessionMetadata.Load(dl.DestPath);
+                if (session != null)
+                {
+                    dl.Title = session.GameTitle;
+                    dl.SteamRipUrl = session.SteamRipUrl;
+                    dl.Version = session.Version;
+                    dl.ImageUrl = session.ImageUrl;
+                    dl.NotifyAll();
+                }
+
+                _ = new DownloadSessionMetadata
+                {
+                    GameTitle = dl.Title,
+                    SteamRipUrl = dl.SteamRipUrl,
+                    ArchivePath = dl.DestPath,
+                    Version = dl.Version ?? "",
+                    ImageUrl = dl.ImageUrl,
+                    DownloadDir = GlobalSettings.DownloadDirectory
+                }.SaveAsync();
+
                 var downloader = new CustomDownloader(dl.SourceUrl, dl.DestPath);
                 downloader.BuzzheavierPageUrl = dl.PageUrl;
+                downloader.SteamRipPageUrl = dl.SteamRipUrl;
+                downloader.ImageUrl = dl.ImageUrl;
                 downloader.ThreadCount = dl.Source == "Gofile" ? CustomDownloader.MaxThreads : 12;
                 if (dl.Source == "Gofile") downloader.GoFileToken = GoFileClient.AccountToken;
 
                 downloader.ProgressChanged += (s, stats) => {
                     this.DispatcherQueue.TryEnqueue(() => {
                         dl.Percentage = stats.Percentage;
-                        dl.Status = $"Downloading {stats.Percentage:F0}% ({stats.SpeedMBps:F1} Mbps)";
+                        dl.ThreadCount = stats.ActiveThreads;
+                        dl.IsPaused = false;
+
+                        double speedVal = stats.SpeedMBps;
+                        string speedUnit = "MB/s";
+                        if (GlobalSettings.DownloadSpeedUnit == SpeedUnit.Bits) { speedVal *= 8; speedUnit = "Mbps"; }
+
+                        var sizeStr = stats.TotalBytes > 0
+                            ? $"{stats.BytesReceived / (1024.0 * 1024):F0}/{stats.TotalBytes / (1024.0 * 1024):F0} MB"
+                            : "";
+                        var etaStr = stats.ETA.TotalSeconds > 0 ? $"ETA {stats.ETA:mm\\:ss}" : "";
+
+                        dl.Status = $"Downloading {stats.Percentage:F0}% ({speedVal:F1} {speedUnit}) {sizeStr} {etaStr} [{stats.ActiveThreads}t]";
                         dl.NotifyAll();
                     });
                 };
@@ -143,29 +176,48 @@ namespace SteamRipApp
                         dl.NotifyAll();
                     });
 
-                    
+                    var session = DownloadSessionMetadata.Load(dl.DestPath);
+                    string gameTitle = dl.Title ?? "Unknown Game";
+                    string steamRipUrl = dl.SteamRipUrl ?? "";
+                    string imageUrl = dl.ImageUrl ?? "";
+                    string version = dl.Version ?? "";
+
+                    if (session != null)
+                    {
+                        gameTitle = session.GameTitle ?? gameTitle;
+                        steamRipUrl = session.SteamRipUrl ?? steamRipUrl;
+                        imageUrl = session.ImageUrl ?? imageUrl;
+                        version = session.Version ?? version;
+
+                        dl.Title = gameTitle;
+                        dl.Version = version;
+                        dl.SteamRipUrl = steamRipUrl;
+                        dl.NotifyAll();
+                    }
+
                     var extractDir = Path.GetDirectoryName(dl.DestPath) ?? GlobalSettings.DownloadDirectory;
                     var gameFolder = await PostDownloadProcessor.RunAsync(
                         archivePath: dl.DestPath,
                         extractToDir: extractDir,
-                        gameTitle: dl.Title,
-                        steamRipPageUrl: dl.SteamRipUrl,
-                        imageUrl: dl.ImageUrl,
-                        version: "", 
+                        gameTitle: gameTitle,
+                        steamRipPageUrl: steamRipUrl,
+                        imageUrl: imageUrl,
+                        version: version,
                         onStatus: msg => this.DispatcherQueue.TryEnqueue(() => dl.Status = msg),
                         onProgress: pct => this.DispatcherQueue.TryEnqueue(() => { dl.Percentage = pct; dl.NotifyAll(); }),
                         confirmMap: async (title) => {
+                            if (GlobalSettings.AlwaysCreateRarMap) return true;
                             var tcs = new TaskCompletionSource<bool>();
                             this.DispatcherQueue.TryEnqueue(async () => {
                                 try {
                                     var dialog = new ContentDialog {
                                         Title = "Create Repair Map?",
-                                        Content = $"Would you like to generate a byte-map for {title}? This allows the 'Hard Repair' system to fix corrupted files without re-downloading the entire game later.",
+                                        Content = $"Would you like to generate a byte-map for {title}? This allows the 'Repair' system to fix corrupted files without re-downloading the entire game later.",
                                         PrimaryButtonText = "Create Map (Recommended)",
                                         CloseButtonText = "Skip",
                                         XamlRoot = this.XamlRoot
                                     };
-                                    var result = await dialog.ShowAsync();
+                                    var result = await App.ShowDialogSafeAsync(dialog);
                                     tcs.SetResult(result == ContentDialogResult.Primary);
                                 } catch (Exception ex) {
                                     Logger.LogError("MapPrompt", ex);
@@ -199,7 +251,16 @@ namespace SteamRipApp
                     });
                 };
 
-                _ = downloader.StartDownloadAsync();
+                _ = Task.Run(async () => {
+                    try {
+                        await downloader.StartDownloadAsync();
+                    } catch (Exception ex) {
+                        this.DispatcherQueue.TryEnqueue(() => {
+                            dl.Status = $"❌ Start failed: {ex.Message}";
+                            dl.Phase = "Failed";
+                        });
+                    }
+                });
             } catch (Exception ex) {
                 Logger.LogError("DownloadsPage.Resume", ex);
                 dl.Status = "❌ Failed to start";
@@ -221,13 +282,19 @@ namespace SteamRipApp
                 CloseButtonText = "Cancel",
                 XamlRoot = this.XamlRoot
             };
-            var result = await dialog.ShowAsync();
+            var result = await App.ShowDialogSafeAsync(dialog);
 
             if (result == ContentDialogResult.Primary || result == ContentDialogResult.Secondary)
             {
                 if (result == ContentDialogResult.Primary)
                 {
-                    try { if (File.Exists(destPath)) File.Delete(destPath); } catch { }
+                    try {
+                        var parts = ArchiveExtractor.FindArchiveParts(destPath);
+                        foreach (var part in parts)
+                        {
+                            if (File.Exists(part)) File.Delete(part);
+                        }
+                    } catch { }
                     try { if (File.Exists(destPath + ".progress")) File.Delete(destPath + ".progress"); } catch { }
                 }
 
@@ -275,6 +342,82 @@ namespace SteamRipApp
                 if (result != null) return result;
             }
             return null;
+        }
+
+        private async Task RunExtractionOnlyAsync(ActiveDownloadMetadata dl)
+        {
+            try {
+                this.DispatcherQueue.TryEnqueue(() => {
+                    dl.Phase = "Extracting";
+                    dl.Status = "📦 Preparing extraction...";
+                    dl.Percentage = 0;
+                    dl.IsPaused = false;
+                    dl.NotifyAll();
+                });
+
+                if (!File.Exists(dl.DestPath))
+                {
+                    this.DispatcherQueue.TryEnqueue(() => {
+                        dl.Phase = "Failed";
+                        dl.Status = "❌ Archive missing";
+                    });
+                    return;
+                }
+
+                var session = DownloadSessionMetadata.Load(dl.DestPath);
+                string gameTitle = dl.Title;
+                string steamRipUrl = dl.SteamRipUrl;
+                string imageUrl = dl.ImageUrl;
+                string version = dl.Version;
+
+                if (session != null)
+                {
+                    gameTitle = session.GameTitle;
+                    steamRipUrl = session.SteamRipUrl;
+                    imageUrl = session.ImageUrl;
+                    version = session.Version;
+
+                    dl.Title = gameTitle;
+                    dl.Version = version;
+                    dl.SteamRipUrl = steamRipUrl;
+                    dl.NotifyAll();
+                }
+
+                var extractDir = Path.GetDirectoryName(dl.DestPath) ?? GlobalSettings.DownloadDirectory;
+                var gameFolder = await PostDownloadProcessor.RunAsync(
+                    archivePath: dl.DestPath,
+                    extractToDir: extractDir,
+                    gameTitle: gameTitle,
+                    steamRipPageUrl: steamRipUrl,
+                    imageUrl: imageUrl,
+                    version: version,
+                    onStatus: msg => this.DispatcherQueue.TryEnqueue(() => dl.Status = msg),
+                    onProgress: pct => this.DispatcherQueue.TryEnqueue(() => { dl.Percentage = pct; dl.NotifyAll(); }),
+                    confirmMap: async (title) => {
+                        if (GlobalSettings.AlwaysCreateRarMap) return true;
+                        return true;
+                    }
+                );
+
+                this.DispatcherQueue.TryEnqueue(() => {
+                    if (gameFolder != null) {
+                        dl.Phase = "Done";
+                        dl.Status = "✅ Extraction completed";
+                        dl.Percentage = 100;
+                    } else {
+                        dl.Phase = "Failed";
+                        dl.Status = "❌ Extraction failed";
+                    }
+                    dl.NotifyAll();
+                    GlobalSettings.Save();
+                });
+            } catch (Exception ex) {
+                Logger.LogError("DownloadsPage.ExtractOnly", ex);
+                this.DispatcherQueue.TryEnqueue(() => {
+                    dl.Phase = "Failed";
+                    dl.Status = $"❌ Error: {ex.Message}";
+                });
+            }
         }
     }
 }
