@@ -231,11 +231,20 @@
                                     </StackPanel>
                                 </Button>
 
-                                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4"
-                                        Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" BorderThickness="0"
-                                        Click="FindImage_Click" Tag="{Binding RootPath}" ToolTipService.ToolTip="Find Cover Image">
-                                    <SymbolIcon Symbol="Find" Foreground="{ThemeResource SystemControlPageTextBaseHighBrush}"/>
-                                </Button>
+                                <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4" Spacing="4">
+
+                                    <Button Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" BorderThickness="0"
+                                            Click="FindImage_Click" Tag="{Binding RootPath}" ToolTipService.ToolTip="Find Cover Image">
+                                        <SymbolIcon Symbol="Find" Foreground="{ThemeResource SystemControlPageTextBaseHighBrush}"/>
+                                    </Button>
+
+                                    <Button Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" BorderThickness="0"
+                                            Click="ShowNote_Click" Tag="{Binding RootPath}"
+                                            Visibility="{Binding HasNote, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                            ToolTipService.ToolTip="How to Run Note">
+                                        <SymbolIcon Symbol="Message" Foreground="{ThemeResource SystemControlPageTextBaseHighBrush}"/>
+                                    </Button>
+                                </StackPanel>
                             </Grid>
                         </Border>
 

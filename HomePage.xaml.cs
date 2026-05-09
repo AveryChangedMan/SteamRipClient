@@ -233,7 +233,13 @@ namespace SteamRipApp
                 var fileName = ExtractFileNameFromUrl(directUrl) ?? (MakeSafeFileName(item.Title) + ".rar");
                 var destPath = Path.Combine(savePath, fileName);
 
-                await StartDownloadWithMetadata(item, destPath, directUrl, bzzhrUrl, "Buzzheavier");
+                string version = "";
+                try {
+                    if (!string.IsNullOrEmpty(item.Url))
+                        version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
+                } catch { }
+
+                await StartDownloadWithMetadata(item, destPath, directUrl, bzzhrUrl, "Buzzheavier", version: version);
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload-Buzz", ex);
             }
@@ -279,13 +285,19 @@ namespace SteamRipApp
                 var fileName = ExtractFileNameFromUrl(directUrl) ?? (MakeSafeFileName(item.Title) + ".rar");
                 var destPath = Path.Combine(savePath, fileName);
 
-                await StartDownloadWithMetadata(item, destPath, directUrl, item.GoFileUrl ?? "", "Gofile", isGoFile: true);
+                string version = "";
+                try {
+                    if (!string.IsNullOrEmpty(item.Url))
+                        version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
+                } catch { }
+
+                await StartDownloadWithMetadata(item, destPath, directUrl, item.GoFileUrl ?? "", "Gofile", isGoFile: true, version: version);
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload-GoFile", ex);
             }
         }
 
-        private async Task StartDownloadWithMetadata(SearchResult item, string destPath, string directUrl, string pageUrl, string sourceName, bool isGoFile = false)
+        private async Task StartDownloadWithMetadata(SearchResult item, string destPath, string directUrl, string pageUrl, string sourceName, bool isGoFile = false, string version = "")
         {
 
             try {
@@ -359,7 +371,7 @@ namespace SteamRipApp
                 GameTitle = item.Title,
                 SteamRipUrl = item.Url,
                 ArchivePath = destPath,
-                Version = "",
+                Version = version,
                 ImageUrl = item.ImageUrl,
                 DownloadDir = GlobalSettings.DownloadDirectory
             }.SaveAsync();
@@ -400,12 +412,6 @@ namespace SteamRipApp
 
                 var archivePath = destPath;
                 var extractDir  = Path.GetDirectoryName(destPath) ?? GlobalSettings.DownloadDirectory;
-
-                string version = "";
-                try {
-                    if (!string.IsNullOrEmpty(item.Url))
-                        version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
-                } catch { }
 
                 metadata.Title = ScannerEngine.CleanTitle(metadata.Title);
 

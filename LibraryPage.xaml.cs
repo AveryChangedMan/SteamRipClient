@@ -35,12 +35,27 @@ namespace SteamRipApp
             this.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
             DialogResultsList.ItemsSource = DialogResults;
             LinkResultsList.ItemsSource = LinkResults;
-            this.Loaded += async (s, e) => {
+
+            ScannerEngine.LibraryChanged += OnLibraryChanged;
+
+            this.Loaded += (s, e) => {
                 if (!string.IsNullOrEmpty(_persistedStatusText)) StatusLabel.Text = _persistedStatusText;
-                if (FoundGames.Count == 0 && !_isRefreshing) await RefreshLibrary();
                 StartProcessPolling();
             };
-            this.Unloaded += (s, e) => StopProcessPolling();
+            this.Unloaded += (s, e) => {
+                StopProcessPolling();
+            };
+        }
+
+        protected override async void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+        {
+            base.OnNavigatedTo(e);
+            if (!_isRefreshing) await RefreshLibrary();
+        }
+
+        private async void OnLibraryChanged()
+        {
+            await RefreshLibrary();
         }
 
         private void StartProcessPolling()
@@ -60,10 +75,23 @@ namespace SteamRipApp
         {
             if (_isRefreshing) return;
 
-            foreach (var game in FoundGames)
+            Task.Run(() =>
             {
-                game.IsRunning = IsGameRunning(game);
-            }
+                var updates = new List<(GameFolder Game, bool Running)>();
+                foreach (var game in FoundGames.ToList())
+                {
+                    bool running = IsGameRunning(game);
+                    if (game.IsRunning != running) updates.Add((game, running));
+                }
+
+                if (updates.Count > 0)
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        foreach (var up in updates) up.Game.IsRunning = up.Running;
+                    });
+                }
+            });
         }
 
         private static bool IsGameRunning(GameFolder game)
@@ -145,6 +173,21 @@ namespace SteamRipApp
                 var scannedPaths = new HashSet<string>(
                     results.Select(g => g.RootPath), StringComparer.OrdinalIgnoreCase);
 
+                if (GlobalSettings.CurrentMove != null)
+                {
+                    var move = GlobalSettings.CurrentMove;
+                    bool targetGone    = !Directory.Exists(move.TargetPath);
+                    bool sourceGone    = !Directory.Exists(move.SourcePath);
+                    bool isTempTarget  = move.TargetPath.EndsWith("-moving", StringComparison.OrdinalIgnoreCase);
+                    if ((move.IsCopyFinished && targetGone && isTempTarget) ||
+                        (move.IsCopyFinished && sourceGone && !isTempTarget))
+                    {
+                        Logger.Log($"[Library] Clearing stale CurrentMove for '{move.GameTitle}' — move appears completed.");
+                        GlobalSettings.CurrentMove = null;
+                        GlobalSettings.Save();
+                    }
+                }
+
                 var existingGames = FoundGames.ToDictionary(g => g.RootPath, g => g, StringComparer.OrdinalIgnoreCase);
                 var newGamesList = new List<GameFolder>();
 
@@ -168,6 +211,10 @@ namespace SteamRipApp
                             if (string.IsNullOrEmpty(game.Version)) game.Version = metadata.Version ?? "1.0.0";
                             if (string.IsNullOrEmpty(game.Url))     game.Url = metadata.Url ?? "";
                             if (string.IsNullOrEmpty(game.ImageUrl)) game.ImageUrl = metadata.ImageUrl ?? "";
+                            game.HasReadNote = metadata.HasReadNote;
+
+                            if (string.IsNullOrEmpty(game.HowToRunNote) && !string.IsNullOrEmpty(metadata.HowToRunNote))
+                                game.HowToRunNote = metadata.HowToRunNote;
                             metadata.Title = game.Title;
                         }
                         else
@@ -190,6 +237,12 @@ namespace SteamRipApp
                             existing.ImageUrl = game.ImageUrl ?? "";
                             existing.ExecutablePath = game.ExecutablePath ?? "";
                             existing.IsMoveInterrupted = game.IsMoveInterrupted;
+
+                            if (string.IsNullOrEmpty(existing.HowToRunNote) && !string.IsNullOrEmpty(game.HowToRunNote))
+                                existing.HowToRunNote = game.HowToRunNote;
+
+                            if (!string.IsNullOrEmpty(game.LatestVersion))
+                                existing.LatestVersion = game.LatestVersion;
                             newGamesList.Add(existing);
                         }
                         else
@@ -232,7 +285,9 @@ namespace SteamRipApp
                             ImageUrl       = meta.ImageUrl ?? "",
                             LocalImagePath = File.Exists(localImage) ? localImage : null,
                             SizeBytes      = 0,
-                            IsEmulatorApplied = meta.IsEmulatorApplied
+                            IsEmulatorApplied = meta.IsEmulatorApplied,
+                            HasReadNote    = meta.HasReadNote,
+                            HowToRunNote   = meta.HowToRunNote ?? ""
                         };
 
                         if (GlobalSettings.GamePageLinks.TryGetValue(meta.LocalPath, out var lUrl) && !string.IsNullOrEmpty(lUrl))
@@ -253,34 +308,47 @@ namespace SteamRipApp
                     using var semaphore = new System.Threading.SemaphoreSlim(8);
                     var tasks = gamesSnapshot.Select(async game =>
                     {
+                        if (game.IsIncompleteExtraction) return;
                         await semaphore.WaitAsync();
                         try
                         {
                             string expectedImg = Path.Combine(game.RootPath, "folder.jpg");
-                            if (File.Exists(expectedImg)) return;
 
-                            string? imgUrl = game.ImageUrl;
-                            if (string.IsNullOrEmpty(imgUrl))
+                            if (!File.Exists(expectedImg))
                             {
-                                var meta = GlobalSettings.Library.FirstOrDefault(m =>
-                                    m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                                    .Equals(game.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                                            StringComparison.OrdinalIgnoreCase));
-                                imgUrl = meta?.ImageUrl;
+                                string? imgUrl = game.ImageUrl;
+                                if (string.IsNullOrEmpty(imgUrl))
+                                {
+                                    var meta = GlobalSettings.Library.FirstOrDefault(m =>
+                                        m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                        .Equals(game.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                                                StringComparison.OrdinalIgnoreCase));
+                                    imgUrl = meta?.ImageUrl;
+                                }
+
+                                if (!string.IsNullOrEmpty(imgUrl))
+                                {
+                                    await ScannerEngine.DownloadGameImageAsync(imgUrl, game.RootPath);
+                                    DispatcherQueue.TryEnqueue(() => {
+                                        if (File.Exists(expectedImg)) {
+                                            game.LocalImagePath = expectedImg;
+                                            Logger.Log($"[Library] Cover image recovered for {game.Title}");
+                                        }
+                                    });
+                                }
                             }
 
-                            if (string.IsNullOrEmpty(imgUrl)) return;
-
-                            await ScannerEngine.DownloadGameImageAsync(imgUrl, game.RootPath);
-
-                            DispatcherQueue.TryEnqueue(() =>
+                            if (string.IsNullOrEmpty(game.HowToRunNote) && !string.IsNullOrEmpty(game.Url))
                             {
-                                if (File.Exists(expectedImg))
+                                var details = await SteamRipScraper.GetGameDetailsAsync(game.Url);
+                                if (details != null && !string.IsNullOrEmpty(details.HowToRunNote))
                                 {
-                                    game.LocalImagePath = expectedImg;
-                                    Logger.Log($"[Library] Cover image recovered for {game.Title}");
+                                    DispatcherQueue.TryEnqueue(() => {
+                                        game.HowToRunNote = details.HowToRunNote;
+                                        Logger.Log($"[Library] Instructions recovered for {game.Title}");
+                                    });
                                 }
-                            });
+                            }
                         }
                         catch { }
                         finally { semaphore.Release(); }
@@ -614,6 +682,44 @@ namespace SteamRipApp
             }
         }
 
+        private async void ShowNote_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string rootPath)
+            {
+                var gf = FoundGames.FirstOrDefault(g => g.RootPath == rootPath);
+                if (gf == null || string.IsNullOrEmpty(gf.HowToRunNote)) return;
+
+                var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase));
+                if (meta != null) {
+                    meta.HasReadNote = true;
+                    GlobalSettings.Save();
+                    gf.HasReadNote = true;
+                }
+
+                string plainText = System.Text.RegularExpressions.Regex.Replace(gf.HowToRunNote, "<.*?>", string.Empty).Trim();
+
+                plainText = plainText.Replace("&nbsp;", " ");
+
+                var dialog = new ContentDialog
+                {
+                    Title = "📖 How to Run",
+                    Content = new ScrollViewer {
+                        Content = new TextBlock {
+                            Text = plainText,
+                            TextWrapping = TextWrapping.Wrap,
+                            IsTextSelectionEnabled = true,
+                            FontSize = 14,
+                            LineHeight = 22
+                        },
+                        MaxHeight = 500
+                    },
+                    CloseButtonText = "Close",
+                    XamlRoot = this.XamlRoot
+                };
+                await App.ShowDialogSafeAsync(dialog);
+            }
+        }
+
         private void FindImage_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.Tag is string rootPath)
@@ -775,6 +881,11 @@ namespace SteamRipApp
         {
             if (e.ClickedItem is GameFolder gf)
             {
+                if (gf.IsIncompleteExtraction)
+                {
+                    ResumeExtraction(gf.RootPath);
+                    return;
+                }
                 var window = (Application.Current as App)?.m_window as MainWindow;
                 window?.OpenConfig(gf.RootPath, gf.Title, gf.ExecutablePath);
             }
@@ -782,75 +893,124 @@ namespace SteamRipApp
 
         private async void Launch_Click(object sender, RoutedEventArgs e)
         {
-            string? path = null;
-            if (sender is FrameworkElement fe && fe.Tag is string t) path = t;
-            if (path == null) return;
-
-            var gf = FoundGames.FirstOrDefault(g => g.RootPath == path);
-            if (gf == null) return;
-
-            if (gf.IsRepairRequired)
+            if (sender is Button btn && btn.DataContext is GameFolder gf)
             {
-                Repair_Click(sender, e);
-                return;
+                await PerformLaunchAsync(gf, sender, e);
             }
+        }
 
-            if (gf.IsRepairable && !gf.IsRunning && !gf.IsMoving)
+        private async Task PerformLaunchAsync(GameFolder gf, object sender, RoutedEventArgs e)
+        {
+            string path = gf.RootPath;
+            try
             {
-                StatusLabel.Text = $"Verifying {gf.Title}...";
-                var report = await RepairService.AnalyzeGameAsync(gf.RootPath, gf.GameSubFolderPath ?? gf.RootPath, null, null, false, true);
-                Logger.Log($"[Launch-Check] {gf.Title}: {report.MissingFiles.Count} missing, {report.CorruptedFiles.Count} corrupted, {report.AddedFiles.Count} mods.");
-
-                if (report.MissingFiles.Count > 0)
-                    Logger.Log($"[Launch-Check] Missing files for {gf.Title}: {string.Join(", ", report.MissingFiles.Take(10))}{(report.MissingFiles.Count > 10 ? "..." : "")}");
-                if (report.CorruptedFiles.Count > 0)
-                    Logger.Log($"[Launch-Check] Corrupted files for {gf.Title}: {string.Join(", ", report.CorruptedFiles.Take(10))}{(report.CorruptedFiles.Count > 10 ? "..." : "")}");
-
-                StatusLabel.Text = "";
-
-                if (report.HasIntegrityIssues)
+                if (gf.IsIncompleteExtraction)
                 {
-                    Logger.Log($"[Launch-Check] {gf.Title} BLOCKED: Integrity issues found.");
-                    await App.ShowDialogSafeAsync(new ContentDialog {
-                        Title = "Integrity Issue",
-                        Content = "Issues found with game files. Please perform a repair to ensure the game runs correctly.",
-                        CloseButtonText = "OK",
-                        XamlRoot = this.XamlRoot
-                    });
-                    gf.IsRepairRequired = true;
+                    ResumeExtraction(path);
                     return;
                 }
 
-                var trustedFiles = RepairService.LoadModsManifest(gf.RootPath);
-                var newMods = report.AddedFiles.Where(f => !trustedFiles.Contains(f, StringComparer.OrdinalIgnoreCase)).ToList();
-                if (newMods.Count > 0)
+                if (gf.IsRepairRequired)
                 {
-                    _ = DispatcherQueue.TryEnqueue(async () => {
-                        var dialog = new ContentDialog {
-                            Title = "New Files Detected",
-                            Content = $"New files/mods were detected in '{gf.Title}'. Do you want to trust them?",
-                            PrimaryButtonText = "Trust",
-                            SecondaryButtonText = "Ignore",
+                    Repair_Click(sender, e);
+                    return;
+                }
+
+                if (gf.HasNote && !gf.HasReadNote)
+                {
+                    var noteDialog = new ContentDialog
+                    {
+                        Title = "Important Instructions",
+                        Content = $"This game has special 'How to Run' instructions that you haven't read yet.\n\nIt is highly recommended to read them to ensure the game works correctly.",
+                        PrimaryButtonText = "Read Note",
+                        SecondaryButtonText = "Launch Anyway",
+                        CloseButtonText = "Cancel",
+                        XamlRoot = this.XamlRoot
+                    };
+
+                    var noteResult = await App.ShowDialogSafeAsync(noteDialog);
+                    if (noteResult == ContentDialogResult.Primary)
+                    {
+                        ShowNote_Click(sender, e);
+                        return;
+                    }
+                    else if (noteResult == ContentDialogResult.None)
+                    {
+                        return;
+                    }
+
+                }
+
+                if (gf.IsRepairable && !gf.IsRunning && !gf.IsMoving)
+                {
+                    StatusLabel.Text = $"Verifying {gf.Title}...";
+                    var report = await RepairService.AnalyzeGameAsync(gf.RootPath, gf.RootPath, null, null, false, true);
+                    Logger.Log($"[Launch-Check] {gf.Title}: {report.MissingFiles.Count} missing, {report.CorruptedFiles.Count} corrupted, {report.AddedFiles.Count} mods.");
+
+                    if (report.MissingFiles.Count > 0)
+                        Logger.Log($"[Launch-Check] Missing files for {gf.Title}: {string.Join(", ", report.MissingFiles.Take(10))}{(report.MissingFiles.Count > 10 ? "..." : "")}");
+                    if (report.CorruptedFiles.Count > 0)
+                        Logger.Log($"[Launch-Check] Corrupted files for {gf.Title}: {string.Join(", ", report.CorruptedFiles.Take(10))}{(report.CorruptedFiles.Count > 10 ? "..." : "")}");
+
+                    StatusLabel.Text = "";
+
+                    if (report.HasIntegrityIssues)
+                    {
+                        Logger.Log($"[Launch-Check] {gf.Title} BLOCKED/WARNING: Integrity issues found.");
+                        var diag = new ContentDialog {
+                            Title = "Integrity Issue Detected",
+                            Content = "Critical issues were found with your game files. Launching in this state may cause crashes or save corruption.\n\nWould you like to repair now, or attempt to launch anyway?",
+                            PrimaryButtonText = "Repair Now",
+                            SecondaryButtonText = "Launch Anyways",
+                            CloseButtonText = "Cancel",
                             XamlRoot = this.XamlRoot
                         };
-                        if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary) {
-                            RepairService.UpdateModsManifest(gf.RootPath, trustedFiles.Concat(newMods).ToList());
+
+                        var result = await App.ShowDialogSafeAsync(diag);
+                        if (result == ContentDialogResult.Primary)
+                        {
+                            Repair_Click(sender, e);
+                            return;
                         }
-                    });
+                        else if (result == ContentDialogResult.None)
+                        {
+                            gf.IsRepairRequired = true;
+                            return;
+                        }
+
+                        Logger.Log($"[Launch-Check] User chose to bypass integrity check for {gf.Title}.");
+                    }
+
+                    var trustedFiles = RepairService.LoadModsManifest(gf.RootPath);
+                    var newMods = report.AddedFiles.Where(f => !trustedFiles.Contains(f, StringComparer.OrdinalIgnoreCase)).ToList();
+                    if (newMods.Count > 0)
+                    {
+                        _ = DispatcherQueue.TryEnqueue(async () => {
+                            var dialog = new ContentDialog {
+                                Title = "New Files Detected",
+                                Content = $"New files/mods were detected in '{gf.Title}'. Do you want to trust them?",
+                                PrimaryButtonText = "Trust",
+                                SecondaryButtonText = "Ignore",
+                                XamlRoot = this.XamlRoot
+                            };
+                            if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary) {
+                                RepairService.UpdateModsManifest(gf.RootPath, trustedFiles.Concat(newMods).ToList());
+                            }
+                        });
+                    }
                 }
-            }
 
-            if (gf.HasMissingRedists)
-            {
-                InstallRedist_Click(sender, e);
-                return;
-            }
+                if (gf.HasMissingRedists)
+                {
+                    InstallRedist_Click(sender, e);
+                    return;
+                }
 
-            if (gf.IsRunning)
-            {
-                StopGame(gf);
-                return;
-            }
+                if (gf.IsRunning)
+                {
+                    StopGame(gf);
+                    return;
+                }
 
                 if (!GlobalSettings.GameConfigs.ContainsKey(path))
                     GlobalSettings.GameConfigs[path] = new GameConfig();
@@ -957,6 +1117,11 @@ namespace SteamRipApp
                     Logger.Log($"Launch error: {ex.Message}");
                 }
             }
+            catch (Exception ex)
+            {
+                Logger.LogError("LaunchOuter", ex);
+            }
+        }
 
         private async void RepairMove_Click(object sender, RoutedEventArgs e)
         {
@@ -1507,7 +1672,18 @@ namespace SteamRipApp
                 }
 
                 StatusLabel.Text = "✅ No issues found. Game is intact.";
-                _ = App.ShowDialogSafeAsync(new ContentDialog { Title = "✅ Integrity Perfect", Content = $"All files in \"{gf.Title}\" are present and match their original hashes.", CloseButtonText = "Great!", XamlRoot = this.XamlRoot });
+                var perfectDialog = new ContentDialog {
+                    Title = "✅ Integrity Perfect",
+                    Content = $"All files in \"{gf.Title}\" are present and match their original hashes.",
+                    PrimaryButtonText = "Launch",
+                    CloseButtonText = "Great!",
+                    XamlRoot = this.XamlRoot
+                };
+
+                if (await App.ShowDialogSafeAsync(perfectDialog) == ContentDialogResult.Primary)
+                {
+                    await PerformLaunchAsync(gf, sender, e);
+                }
                 return;
             }
 
@@ -1523,8 +1699,8 @@ namespace SteamRipApp
             }
 
             string issues = "";
-            if (report.MissingFiles.Count > 0) issues += $"❌ Missing: {report.MissingFiles.Count}\n";
-            if (report.CorruptedFiles.Count > 0) issues += $"⚠️ Corrupted: {report.CorruptedFiles.Count}\n";
+            if (report.MissingFiles.Count > 0) issues += $"❌ Missing: {report.MissingFiles.Count} ({RepairService.FormatSize(report.MissingSize)})\n";
+            if (report.CorruptedFiles.Count > 0) issues += $"⚠️ Corrupted: {report.CorruptedFiles.Count} ({RepairService.FormatSize(report.CorruptedSize)})\n";
 
             var confirm = new ContentDialog
             {
@@ -1606,7 +1782,7 @@ namespace SteamRipApp
             {
 
                 string storagePath = game.RootPath;
-                string contentPath = game.GameSubFolderPath ?? game.RootPath;
+                string contentPath = game.RootPath;
                 string skelPath = Path.Combine(storagePath, RepairService.SkeletonFileName);
 
                 string mapPath = Path.Combine(storagePath, RepairService.MapFileName);
@@ -1689,7 +1865,6 @@ namespace SteamRipApp
 
                 var hosts = await SteamRipScraper.GetDownloadHostsAsync(game.Url);
                 var sortedHosts = hosts.OrderByDescending(h => h.Name == "Buzzheavier" ? 2 : (h.Name == "GoFile" ? 1 : 0)).ToList();
-                bool updateStarted = false;
                 bool overallSuccess = false;
 
                 foreach (var host in sortedHosts)
@@ -1711,7 +1886,6 @@ namespace SteamRipApp
 
                         if (string.IsNullOrEmpty(newUrl)) continue;
 
-                        updateStarted = true;
                         bool success = await RepairService.PerformSmartUpdateAsync(path, newUrl, (status, pct) => {
                             DispatcherQueue.TryEnqueue(() => {
                                 game.ProgressPhase = "Updating...";
@@ -1734,6 +1908,9 @@ namespace SteamRipApp
 
                 if (overallSuccess)
                 {
+                    game.IsInProgress = false;
+                    game.ProgressPhase = "";
+                    game.ProgressDetails = "";
                     game.Version = game.LatestVersion;
 
                     var metadata = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(game.RootPath, StringComparison.OrdinalIgnoreCase));
@@ -1753,13 +1930,11 @@ namespace SteamRipApp
                 }
                 else
                 {
-                    if (!updateStarted)
-                        throw new Exception("No working download links could be resolved.");
-                    else
-                        throw new Exception("Update failed across all available hosts. Please try again later.");
+                    game.IsInProgress = false;
+                    throw new Exception("No working download links could be resolved.");
                 }
             } catch (Exception ex) {
-                Logger.LogError("UpdateClick", ex);
+                Logger.LogError("UpdateGame_Click", ex);
                 _ = App.ShowDialogSafeAsync(new ContentDialog {
                     Title = "Update Failed",
                     Content = ex.Message,
@@ -1768,8 +1943,78 @@ namespace SteamRipApp
                 });
             } finally {
                 game.IsInProgress = false;
+                game.ProgressPhase = "";
+                game.ProgressDetails = "";
                 await RefreshLibrary();
             }
+        }
+        private async void ResumeExtraction(string rarPath)
+        {
+            var gf = FoundGames.FirstOrDefault(g => g.RootPath == rarPath);
+            if (gf == null) return;
+
+            var session = DownloadSessionMetadata.Load(rarPath);
+            if (session == null)
+            {
+                await App.ShowDialogSafeAsync(new ContentDialog {
+                    Title = "Session Data Missing",
+                    Content = "Could not find session metadata to resume this extraction.",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.XamlRoot
+                });
+                return;
+            }
+
+            var confirm = new ContentDialog {
+                Title = "Resume Extraction",
+                Content = $"Resume extraction and setup for \"{session.GameTitle}\"?",
+                PrimaryButtonText = "Resume",
+                CloseButtonText = "Cancel",
+                XamlRoot = this.XamlRoot
+            };
+
+            if (await App.ShowDialogSafeAsync(confirm) != ContentDialogResult.Primary) return;
+
+            _ = Task.Run(async () => {
+                try {
+                    gf.IsMoving = true;
+                    gf.ProgressPhase = "RESUMING";
+
+                    var result = await PostDownloadProcessor.RunAsync(
+                        rarPath,
+                        session.DownloadDir,
+                        session.GameTitle,
+                        session.SteamRipUrl,
+                        session.ImageUrl,
+                        session.Version,
+                        onStatus: (status) => {
+                            DispatcherQueue.TryEnqueue(() => {
+                                gf.ProgressDetails = status;
+                            });
+                        },
+                        onProgress: (pct) => {
+                            DispatcherQueue.TryEnqueue(() => {
+                                gf.ProgressPercentage = pct;
+                            });
+                        },
+                        confirmMap: (title) => Task.FromResult(true)
+                    );
+
+                    if (result != null)
+                    {
+                        session.Delete();
+                        DispatcherQueue.TryEnqueue(async () => {
+                            await RefreshLibrary();
+                        });
+                    }
+                }
+                catch (Exception ex) {
+                    Logger.LogError("ResumeExtraction", ex);
+                }
+                finally {
+                    gf.IsMoving = false;
+                }
+            });
         }
     }
 }

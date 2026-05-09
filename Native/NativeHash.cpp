@@ -43,6 +43,18 @@ static void XXH64_Reset(XXH64_State* state, uint64_t seed) {
     state->memsize = 0;
 }
 
+static inline uint64_t XXH64_read64(const void* ptr) {
+    uint64_t val;
+    memcpy(&val, ptr, sizeof(uint64_t));
+    return val;
+}
+
+static inline uint32_t XXH64_read32(const void* ptr) {
+    uint32_t val;
+    memcpy(&val, ptr, sizeof(uint32_t));
+    return val;
+}
+
 static void XXH64_Update(XXH64_State* state, const uint8_t* input, size_t length) {
     state->totalLen += length;
     const uint8_t* p = input;
@@ -56,10 +68,10 @@ static void XXH64_Update(XXH64_State* state, const uint8_t* input, size_t length
 
     if (state->memsize > 0) {
         memcpy(state->mem + state->memsize, p, 32 - state->memsize);
-        state->v1 = XXH64_round(state->v1, *(const uint64_t*)(state->mem + 0));
-        state->v2 = XXH64_round(state->v2, *(const uint64_t*)(state->mem + 8));
-        state->v3 = XXH64_round(state->v3, *(const uint64_t*)(state->mem + 16));
-        state->v4 = XXH64_round(state->v4, *(const uint64_t*)(state->mem + 24));
+        state->v1 = XXH64_round(state->v1, XXH64_read64(state->mem + 0));
+        state->v2 = XXH64_round(state->v2, XXH64_read64(state->mem + 8));
+        state->v3 = XXH64_round(state->v3, XXH64_read64(state->mem + 16));
+        state->v4 = XXH64_round(state->v4, XXH64_read64(state->mem + 24));
         p += 32 - state->memsize;
         state->memsize = 0;
     }
@@ -67,10 +79,10 @@ static void XXH64_Update(XXH64_State* state, const uint8_t* input, size_t length
     if (p <= bEnd - 32) {
         const uint8_t* const limit = bEnd - 32;
         do {
-            state->v1 = XXH64_round(state->v1, *(const uint64_t*)p); p += 8;
-            state->v2 = XXH64_round(state->v2, *(const uint64_t*)p); p += 8;
-            state->v3 = XXH64_round(state->v3, *(const uint64_t*)p); p += 8;
-            state->v4 = XXH64_round(state->v4, *(const uint64_t*)p); p += 8;
+            state->v1 = XXH64_round(state->v1, XXH64_read64(p)); p += 8;
+            state->v2 = XXH64_round(state->v2, XXH64_read64(p)); p += 8;
+            state->v3 = XXH64_round(state->v3, XXH64_read64(p)); p += 8;
+            state->v4 = XXH64_round(state->v4, XXH64_read64(p)); p += 8;
         } while (p <= limit);
     }
 
@@ -98,14 +110,14 @@ static uint64_t XXH64_Digest(const XXH64_State* state) {
     const uint8_t* const bEnd = p + state->memsize;
 
     while (p + 8 <= bEnd) {
-        uint64_t k1 = XXH64_round(0, *(const uint64_t*)p);
+        uint64_t k1 = XXH64_round(0, XXH64_read64(p));
         h64 ^= k1;
         h64 = XXH64_rotl(h64, 27) * XXH_PRIME64_1 + XXH_PRIME64_4;
         p += 8;
     }
 
     if (p + 4 <= bEnd) {
-        h64 ^= (uint64_t)(*(const uint32_t*)p) * XXH_PRIME64_1;
+        h64 ^= (uint64_t)(XXH64_read32(p)) * XXH_PRIME64_1;
         h64 = XXH64_rotl(h64, 23) * XXH_PRIME64_2 + XXH_PRIME64_3;
         p += 4;
     }
@@ -127,6 +139,8 @@ static uint64_t XXH64_Digest(const XXH64_State* state) {
 
 extern "C" {
     __declspec(dllexport) int __stdcall XXH64_HashFile(const wchar_t* filePath, uint64_t* outHash) {
+        if (!filePath || !outHash) return -1;
+
         HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (hFile == INVALID_HANDLE_VALUE) return (int)GetLastError();
 
@@ -154,7 +168,7 @@ extern "C" {
         SYSTEM_INFO sysInfo;
         GetSystemInfo(&sysInfo);
         const uint64_t allocationGranularity = sysInfo.dwAllocationGranularity;
-        const uint64_t chunkSize = 512 * 1024 * 1024;
+        const uint64_t chunkSize = 256 * 1024 * 1024;
 
         uint64_t offset = 0;
         while (offset < (uint64_t)fileSize.QuadPart) {
@@ -168,6 +182,7 @@ extern "C" {
             const uint8_t* fileData = (const uint8_t*)MapViewOfFile(hMapping, FILE_MAP_READ, (DWORD)(alignedOffset >> 32), (DWORD)(alignedOffset & 0xFFFFFFFF), (SIZE_T)fullViewSize);
 
             if (fileData == NULL) {
+
                 CloseHandle(hMapping);
                 CloseHandle(hFile);
                 return (int)GetLastError();

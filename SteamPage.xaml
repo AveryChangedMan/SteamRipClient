@@ -92,10 +92,10 @@
                             </Grid>
                         </Border>
 
-                        <StackPanel Grid.Row="1" Padding="14" Spacing="12">
-                            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="15"
+                        <StackPanel Grid.Row="1" Padding="10" Spacing="8">
+                            <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="14"
                                        MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
-                                       HorizontalAlignment="Left" Height="40"/>
+                                       HorizontalAlignment="Left" Height="36"/>
 
                             <Grid>
 
@@ -115,16 +115,16 @@
                                         Tag="{Binding RootPath}"
                                         CornerRadius="8"/>
 
-                                <StackPanel Visibility="{Binding ShowIntegratedGroup, Converter={StaticResource BooleanToVisibilityConverter}}" Spacing="8">
+                                <StackPanel Visibility="{Binding ShowIntegratedGroup, Converter={StaticResource BooleanToVisibilityConverter}}" Spacing="6">
                                     <Button Content="REIMPORT ARTWORK"
                                             Background="{ThemeResource SystemControlBackgroundBaseLowBrush}"
                                             HorizontalAlignment="Stretch" Padding="0,8" FontWeight="SemiBold"
                                             Click="ImportToSteam_Click"
                                             Tag="{Binding RootPath}"
-                                            CornerRadius="6" FontSize="11"/>
+                                            CornerRadius="6" FontSize="10"/>
                                     <Button Content="Remove Integration"
                                             Background="Transparent" BorderThickness="1" BorderBrush="#44FFFFFF" Foreground="#FF6666"
-                                            HorizontalAlignment="Stretch" Padding="0,4" FontSize="10"
+                                            HorizontalAlignment="Stretch" Padding="0,6" FontSize="10"
                                             Click="RemoveFromSteam_Click"
                                             Tag="{Binding RootPath}"
                                             CornerRadius="6"/>

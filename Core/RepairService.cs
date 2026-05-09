@@ -2,6 +2,7 @@ using System;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
 using System.IO;
+using Microsoft.Win32.SafeHandles;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -9,6 +10,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 using SharpCompress.Archives.Rar;
 using SharpCompress.Readers;
 using SharpCompress.Readers.Rar;
@@ -24,7 +26,9 @@ namespace SteamRipApp.Core
 {
     public class ArchiveMap
     {
+        public string Title { get; set; } = "";
         public string ArchiveName { get; set; } = "";
+        public string RarVersion { get; set; } = "";
         public string PrefixBase64 { get; set; } = "";
         public long PrefixSize { get; set; }
         public bool IsSolid { get; set; }
@@ -42,6 +46,7 @@ namespace SteamRipApp.Core
         public string RarVersion { get; set; } = "RAR5";
         public uint Crc32 { get; set; }
         public byte Method { get; set; }
+        public bool IsDirectory { get; set; }
     }
 
     public class FileSkeleton
@@ -64,6 +69,8 @@ namespace SteamRipApp.Core
         public List<string> MissingFiles { get; set; } = [];
         public List<string> CorruptedFiles { get; set; } = [];
         public List<string> AddedFiles { get; set; } = [];
+        public long MissingSize { get; set; }
+        public long CorruptedSize { get; set; }
         public bool HasIntegrityIssues => MissingFiles.Count > 0 || CorruptedFiles.Count > 0;
         public bool HasIssues => HasIntegrityIssues || AddedFiles.Count > 0;
         public bool MetadataMissing { get; set; }
@@ -82,11 +89,25 @@ namespace SteamRipApp.Core
         private static bool _isHashingActive = false;
         private static readonly Dictionary<string, (string ContentPath, bool Force, string? SnapshotName)> _pendingHashing = new(StringComparer.OrdinalIgnoreCase);
         private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
+        private static readonly string[] SizeSuffixes = ["B", "KB", "MB", "GB", "TB"];
 
+        private static readonly ManualResetEventSlim _hashingStoppedEvent = new(true);
+
+        public static string FormatSize(long bytes)
+        {
+            int i = 0;
+            double dblSByte = bytes;
+            for (; i < SizeSuffixes.Length && bytes >= 1024; i++, bytes /= 1024)
+            {
+                dblSByte = bytes / 1024.0;
+            }
+            return $"{dblSByte:0.##} {SizeSuffixes[i]}";
+        }
         public static void StartBackgroundHashing()
         {
             if (_isHashingActive) return;
             _isHashingActive = true;
+            _hashingStoppedEvent.Reset();
             _hashingCts = new CancellationTokenSource();
             _ = Task.Run(() => HashingLoop(_hashingCts.Token));
             Logger.Log("[Repair] Background hashing loop started.");
@@ -95,41 +116,56 @@ namespace SteamRipApp.Core
         public static void StopBackgroundHashing()
         {
             _hashingCts?.Cancel();
-            _hashingCts?.Dispose();
-            _hashingCts = null;
             _isHashingActive = false;
-            Logger.Log("[Repair] Background hashing loop stopped.");
+            Logger.Log("[Repair] Background hashing stop requested.");
+        }
+
+        public static bool WaitForHashingToStop(int timeoutMs)
+        {
+            return _hashingStoppedEvent.Wait(timeoutMs);
         }
 
         public static void TriggerManualBackup(string storagePath, string contentPath, string? snapshotName = null, bool force = true)
         {
 
-            string targetDir = contentPath;
-            if (File.Exists(contentPath))
+            Task.Run(() =>
             {
-                targetDir = Path.GetDirectoryName(contentPath) ?? contentPath;
-            }
+                try
+                {
+                    string targetDir = contentPath;
+                    try {
+                        if (File.Exists(contentPath))
+                        {
+                            targetDir = Path.GetDirectoryName(contentPath) ?? contentPath;
+                        }
+                    } catch { }
 
-            Logger.Log($"[Repair] Queueing Manual Backup for: {targetDir} (Snapshot: {snapshotName ?? "Default"})");
+                    Logger.Log($"[Repair] Queueing Manual Backup for: {targetDir} (Snapshot: {snapshotName ?? "Default"})");
 
-            lock (_pendingHashing)
-            {
-                _pendingHashing[storagePath] = (targetDir, force, snapshotName);
-            }
+                    UpdateGameProgress(storagePath, true, "Queued", 0, "Waiting in hashing queue...");
 
-            StartBackgroundHashing();
+                    lock (_pendingHashing)
+                    {
+                        _pendingHashing[storagePath] = (targetDir, force, snapshotName);
+                    }
+
+                    StartBackgroundHashing();
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError("TriggerManualBackup", ex);
+                }
+            });
         }
 
-        public static async Task RunInitialHashAsync(string storagePath, string contentPath)
+        public static async Task RunInitialHashAsync(string storagePath, string contentPath, string? version = null)
         {
             Logger.Log($"[Repair] Running Initial Hash for: {contentPath}");
             lock (_pendingHashing)
             {
                 _pendingHashing.Remove(storagePath);
             }
-            await RunHashingProcessAsync(storagePath, contentPath, CancellationToken.None);
-
-            WriteVersionFile(storagePath);
+            await RunHashingProcessAsync(storagePath, contentPath, CancellationToken.None, version: version);
 
             try
             {
@@ -174,7 +210,7 @@ namespace SteamRipApp.Core
             return ~crc;
         }
 
-        private static readonly char[] _invalidPathChars = Path.GetInvalidPathChars().Concat(new[] { '\0' }).Distinct().ToArray();
+        private static readonly char[] _invalidPathChars = [.. Path.GetInvalidPathChars(), '\0'];
 
         private static string SanitizePath(string path)
         {
@@ -284,56 +320,70 @@ namespace SteamRipApp.Core
 
         private static async Task HashingLoop(CancellationToken ct)
         {
-            while (!ct.IsCancellationRequested)
+            try
             {
-                string? storage = null;
-                string? content = null;
-                string? snapshot = null;
-                bool force = false;
-                lock (_pendingHashing)
+                while (!ct.IsCancellationRequested && !GlobalSettings.IsShuttingDown)
                 {
-                    var first = _pendingHashing.FirstOrDefault();
-                    if (first.Key != null)
+                    string? storage = null;
+                    string? content = null;
+                    string? snapshot = null;
+                    bool force = false;
+                    lock (_pendingHashing)
                     {
-                        storage = first.Key;
-                        content = first.Value.ContentPath;
-                        force = first.Value.Force;
-                        snapshot = first.Value.SnapshotName;
-                        _pendingHashing.Remove(storage);
+                        var first = _pendingHashing.FirstOrDefault();
+                        if (first.Key != null)
+                        {
+                            storage = first.Key;
+                            content = first.Value.ContentPath;
+                            force = first.Value.Force;
+                            snapshot = first.Value.SnapshotName;
+                            _pendingHashing.Remove(storage);
+                        }
+                    }
+
+                    if (storage != null && content != null && Directory.Exists(content))
+                    {
+                        string suffix = string.IsNullOrEmpty(snapshot) || snapshot == "Official Rip Map" ? "" : snapshot + ".";
+                        string skelFile = suffix + SkeletonFileName;
+                        string datFile = suffix + "rip_skeleton.dat";
+                        string skelPath = Path.Combine(storage, skelFile);
+                        string datPath = Path.Combine(storage, datFile);
+
+                        VerifyMetadataSync(skelPath, datPath);
+
+                        if (!force && File.Exists(skelPath))
+                        {
+                            Logger.Log($"[Repair-Hashing] Skipping auto-hashing for {storage} (Snapshot {snapshot ?? "Default"} already exists)");
+                        }
+                        try
+                        {
+                            await RunHashingProcessAsync(storage, content, ct, snapshot);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            Logger.Log($"[Repair] Hashing task cancelled for {storage}.");
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"[Repair] Error hashing {storage}: {ex.Message}");
+                        }
+                        finally
+                        {
+                            UpdateGameProgress(content, false, "Ready", 0, "");
+                        }
+                    }
+                    else
+                    {
+                        try { await Task.Delay(2000, ct); } catch (OperationCanceledException) { break; }
                     }
                 }
-
-                if (storage != null && content != null && Directory.Exists(content))
-                {
-                    string suffix = string.IsNullOrEmpty(snapshot) || snapshot == "Official Rip Map" ? "" : snapshot + ".";
-                    string skelFile = suffix + SkeletonFileName;
-                    string datFile = suffix + "rip_skeleton.dat";
-                    string skelPath = Path.Combine(storage, skelFile);
-                    string datPath = Path.Combine(storage, datFile);
-
-                    VerifyMetadataSync(skelPath, datPath);
-
-                    if (!force && File.Exists(skelPath))
-                    {
-                        Logger.Log($"[Repair-Hashing] Skipping auto-hashing for {storage} (Snapshot {snapshot ?? "Default"} already exists)");
-                    }
-                    try
-                    {
-                        await RunHashingProcessAsync(storage, content, ct, snapshot);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"[Repair] Error hashing {storage}: {ex.Message}");
-                    }
-                    finally
-                    {
-                        UpdateGameProgress(content, false, "Ready", 0, "");
-                    }
-                }
-                else
-                {
-                    await Task.Delay(5000, ct);
-                }
+            }
+            finally
+            {
+                _isHashingActive = false;
+                _hashingStoppedEvent.Set();
+                Logger.Log("[Repair] Background hashing loop exited.");
             }
         }
 
@@ -415,26 +465,72 @@ namespace SteamRipApp.Core
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetFileInformationByHandle(IntPtr hFile, out BY_HANDLE_FILE_INFORMATION lpFileInformation);
 
-        [DllImport("NativeHash.dll", CharSet = CharSet.Unicode)]
-        private static extern int XXH64_HashFile(string filePath, out ulong outHash);
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool SetFileTime(Microsoft.Win32.SafeHandles.SafeFileHandle hFile, ref long lpCreationTime, ref long lpLastAccessTime, ref long lpLastWriteTime);
+
+        [LibraryImport("NativeHash.dll", StringMarshalling = StringMarshalling.Utf16)]
+        private static partial int XXH64_HashFile([MarshalAs(UnmanagedType.LPWStr)] string filePath, out ulong hashValue);
+
+        private static readonly Dictionary<string, GameFolder> _gameFolderCache = new(StringComparer.OrdinalIgnoreCase);
+
+        private static DateTime _lastProgressUpdate = DateTime.MinValue;
 
         private static void UpdateGameProgress(string rootPath, bool isInProgress, string phase, double percentage, string details)
         {
             try
             {
+                var now = DateTime.UtcNow;
+                if (isInProgress && (now - _lastProgressUpdate).TotalMilliseconds < 250 && percentage < 100)
+                {
+                    return;
+                }
+                _lastProgressUpdate = now;
+
                 var dispatcher = App.MainWindowInstance?.DispatcherQueue;
                 if (dispatcher == null) return;
 
                 dispatcher.TryEnqueue(() =>
                 {
-                    var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.RootPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase));
-                    if (gf != null)
-                    {
-                        gf.IsInProgress = isInProgress;
-                        gf.ProgressPhase = phase;
-                        gf.ProgressPercentage = percentage;
-                        gf.ProgressDetails = details;
-                    }
+                    try {
+                        if (!_gameFolderCache.TryGetValue(rootPath, out var gf) || gf == null)
+                        {
+                            foreach (var g in ScannerEngine.FoundGames.ToList())
+                            {
+                                if (g.RootPath.Equals(rootPath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    gf = g;
+                                    _gameFolderCache[rootPath] = gf;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (gf != null)
+                        {
+                            bool phaseChanged = gf.ProgressPhase != phase;
+                            bool significantProgress = Math.Abs(gf.ProgressPercentage - percentage) > 0.5;
+
+                            if (phaseChanged || significantProgress || percentage >= 100 || !isInProgress)
+                            {
+                                gf.IsInProgress = isInProgress;
+                                gf.ProgressPhase = phase;
+                                gf.ProgressPercentage = percentage;
+                                gf.ProgressDetails = details;
+
+                                if (isInProgress)
+                                {
+                                    GlobalSettings.HashingProgress = $"{phase}: {details}";
+                                    GlobalSettings.HashingProgressValue = percentage;
+                                }
+                                else
+                                {
+                                    GlobalSettings.HashingProgress = null;
+                                    GlobalSettings.HashingProgressValue = 0;
+                                }
+                            }
+                        }
+                    } catch { }
                 });
             }
             catch { }
@@ -461,15 +557,17 @@ namespace SteamRipApp.Core
             await RunHashingProcessAsync(path, path, CancellationToken.None, name);
         }
 
-        private static async Task RunHashingProcessAsync(string storagePath, string contentPath, CancellationToken ct, string? snapshotName = null)
+        private static async Task RunHashingProcessAsync(string storagePath, string contentPath, CancellationToken ct, string? snapshotName = null, string? version = null)
         {
             try
             {
+                UpdateGameProgress(storagePath, true, "Starting Scan...", 0, "Analyzing directory structure...");
                 string suffix = string.IsNullOrEmpty(snapshotName) || snapshotName == "Official Rip Map" ? "" : snapshotName + ".";
                 string skeletonPath = Path.Combine(storagePath, suffix + SkeletonFileName);
                 string datPath = Path.Combine(storagePath, suffix + "rip_skeleton.dat");
 
                 Logger.Log($"[Repair-Hashing] 🔍 STARTING INTEGRITY SCAN: {contentPath} (Snapshot: {snapshotName ?? "Default"})");
+                Logger.Log($"[Repair-Hashing] 📂 Initializing directories...");
 
                 var existingSkeleton = new FileSkeleton();
                 if (File.Exists(skeletonPath))
@@ -480,39 +578,47 @@ namespace SteamRipApp.Core
                     } catch { }
                 }
 
-                var allFiles = Directory.GetFiles(contentPath, "*", SearchOption.AllDirectories)
-                                     .Where(f => !Path.GetFileName(f).StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) && !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase))
-                                     .ToList();
-
-                int total = allFiles.Count;
+                int total = 0;
                 int processed = 0;
                 int skipped = 0;
                 var concurrentFiles = new ConcurrentBag<SkeletonFile>();
 
-                var smallFiles = allFiles.Where(f => new FileInfo(f).Length < 10 * 1024 * 1024).ToList();
-                var largeFiles = allFiles.Where(f => new FileInfo(f).Length >= 10 * 1024 * 1024).ToList();
-
-                bool useMulti = GlobalSettings.IsMultiThreadedHashingEnabled;
-                bool isHdd = IsMechanicalDrive(contentPath);
-                int maxDegree = useMulti ? Math.Max(1, Environment.ProcessorCount / 2) : 1;
-
-                if (isHdd)
-                {
-                    Logger.Log($"[Repair-Hashing] 💿 HDD Detected. Throttling to sequential hashing to prevent thrashing.");
-                    maxDegree = 1;
-                }
-
-                Logger.Log($"[Repair-Hashing] Found {total} files ({largeFiles.Count} large, {smallFiles.Count} small). Mode: {(maxDegree > 1 ? "Multi" : "Sequential")}");
-
-                var options = new ParallelOptions { MaxDegreeOfParallelism = maxDegree, CancellationToken = ct };
-
                 await Task.Run(() =>
                 {
+                    var allFiles = Directory.GetFiles(contentPath, "*", SearchOption.AllDirectories)
+                                         .Where(f => !Path.GetFileName(f).StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) && !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase))
+                                         .ToList();
+
+                    total = allFiles.Count;
+                    processed = 0;
+                    skipped = 0;
+
+                    var smallFiles = allFiles.Where(f => new FileInfo(f).Length < 10 * 1024 * 1024).ToList();
+                    var largeFiles = allFiles.Where(f => new FileInfo(f).Length >= 10 * 1024 * 1024).ToList();
+
+                    bool useMulti = GlobalSettings.IsMultiThreadedHashingEnabled;
+                    bool isHdd = IsMechanicalDrive(contentPath);
+                    int maxDegree = useMulti ? Math.Max(1, Environment.ProcessorCount / 2) : 1;
+
+                    if (isHdd)
+                    {
+                        Logger.Log($"[Repair-Hashing] 💿 HDD Detected. Throttling to sequential hashing to prevent thrashing.");
+                        maxDegree = 1;
+                    }
+
+                    Logger.Log($"[Repair-Hashing] Found {total} files ({largeFiles.Count} large, {smallFiles.Count} small). Mode: {(maxDegree > 1 ? "Multi" : "Sequential")}");
+
+                    var existingMap = existingSkeleton.Files.ToDictionary(f => f.Path, f => f, StringComparer.OrdinalIgnoreCase);
+                    var options = new ParallelOptions { MaxDegreeOfParallelism = maxDegree, CancellationToken = ct };
 
                     Parallel.ForEach(largeFiles, options, (file) =>
                     {
-                        if (ct.IsCancellationRequested) return;
-                        ProcessSingleFile(file, contentPath, existingSkeleton, concurrentFiles, ref processed, ref skipped, total, useMulti, ct);
+                        if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return;
+                        try {
+                            ProcessSingleFile(file, storagePath, contentPath, existingMap, concurrentFiles, ref processed, ref skipped, total, useMulti, ct);
+                        } catch (Exception ex) {
+                            Logger.Log($"[Repair-Hashing] ❌ Critical failure on {file}: {ex.Message}");
+                        }
                     });
 
                     var groups = new List<List<string>>();
@@ -536,8 +642,8 @@ namespace SteamRipApp.Core
                     {
                         foreach (var file in group)
                         {
-                            if (ct.IsCancellationRequested) return;
-                            ProcessSingleFile(file, contentPath, existingSkeleton, concurrentFiles, ref processed, ref skipped, total, useMulti, ct);
+                            if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return;
+                            ProcessSingleFile(file, storagePath, contentPath, existingMap, concurrentFiles, ref processed, ref skipped, total, useMulti, ct);
                         }
                     });
                 }, ct);
@@ -547,7 +653,7 @@ namespace SteamRipApp.Core
                     var finalFiles = concurrentFiles.OrderBy(f => f.Path).ToList();
                     var skeleton = new FileSkeleton { Files = finalFiles };
 
-                    File.WriteAllText(skeletonPath, JsonSerializer.Serialize(skeleton, new JsonSerializerOptions { WriteIndented = true }));
+                    File.WriteAllText(skeletonPath, JsonSerializer.Serialize(skeleton, _jsonOptions));
 
                     using (var ms = new MemoryStream())
                     using (var writer = new BinaryWriter(ms))
@@ -565,6 +671,8 @@ namespace SteamRipApp.Core
                     }
 
                     Logger.Log($"[Repair-Hashing] ✅ SCAN COMPLETE: (Processed {total}, Skipped {skipped})");
+
+                    WriteVersionFile(storagePath, version ?? "N/A");
                 }
             }
             catch (OperationCanceledException) { }
@@ -587,7 +695,7 @@ namespace SteamRipApp.Core
             }
         }
 
-        private static void ProcessSingleFile(string file, string contentPath, FileSkeleton existingSkeleton, ConcurrentBag<SkeletonFile> concurrentFiles, ref int processed, ref int skipped, int total, bool useMulti, CancellationToken ct)
+        private static void ProcessSingleFile(string file, string storagePath, string contentPath, Dictionary<string, SkeletonFile> existingMap, ConcurrentBag<SkeletonFile> concurrentFiles, ref int processed, ref int skipped, int total, bool useMulti, CancellationToken ct)
         {
             string rel = Path.GetRelativePath(contentPath, file);
             var fileInfo = new FileInfo(file);
@@ -597,20 +705,18 @@ namespace SteamRipApp.Core
 
             int currentIdx = Interlocked.Increment(ref processed);
 
-            var existing = existingSkeleton.Files.FirstOrDefault(f => f.Path.Equals(rel, StringComparison.OrdinalIgnoreCase));
-            if (existing != null && existing.Size == fileSize && existing.FileTime == fileTime && existing.FileId == fileId)
+            if (existingMap.TryGetValue(rel, out var existing) && existing.Size == fileSize && existing.FileTime == fileTime && existing.FileId == fileId)
             {
                 concurrentFiles.Add(existing);
                 Interlocked.Increment(ref skipped);
                 return;
             }
 
-            // Throttled UI update
             if (currentIdx % 10 == 0 || currentIdx == total)
             {
                 GlobalSettings.HashingProgress = $"Hashing: {Path.GetFileName(file)} ({currentIdx}/{total})";
                 GlobalSettings.HashingProgressValue = (currentIdx * 100.0) / total;
-                UpdateGameProgress(contentPath, true, "Verifying...", GlobalSettings.HashingProgressValue, $"{currentIdx} / {total} files");
+                UpdateGameProgress(storagePath, true, "Verifying...", GlobalSettings.HashingProgressValue, $"{currentIdx} / {total} files");
             }
 
             string hash = "";
@@ -619,10 +725,18 @@ namespace SteamRipApp.Core
 
                 if (GlobalSettings.HashingSpeedCapMB <= 0)
                 {
-                    int result = XXH64_HashFile(file, out ulong hashValue);
-                    if (result == 0)
+
+                    if (fileInfo.Exists)
                     {
-                        hash = hashValue.ToString("x16");
+                        if (GlobalSettings.IsShuttingDown) return;
+                        int result = XXH64_HashFile(file, out ulong hashValue);
+                        if (result == 0)
+                        {
+
+                            var bytes = BitConverter.GetBytes(hashValue);
+                            if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                            hash = Convert.ToHexStringLower(bytes);
+                        }
                     }
                 }
 
@@ -680,13 +794,20 @@ namespace SteamRipApp.Core
 
         private static string ComputeXXHash64(string filePath)
         {
+
+            if (GlobalSettings.IsShuttingDown) return "error";
             try
             {
-
                 if (GlobalSettings.HashingSpeedCapMB <= 0)
                 {
                     int result = XXH64_HashFile(filePath, out ulong hashValue);
-                    if (result == 0) return hashValue.ToString("x16");
+                    if (result == 0)
+                    {
+
+                        var bytes = BitConverter.GetBytes(hashValue);
+                        if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
+                        return Convert.ToHexStringLower(bytes);
+                    }
                 }
 
                 var hasher = new System.IO.Hashing.XxHash64();
@@ -696,6 +817,7 @@ namespace SteamRipApp.Core
                     int bytesRead;
                     while ((bytesRead = fs.Read(buffer, 0, buffer.Length)) > 0)
                     {
+                        if (GlobalSettings.IsShuttingDown) return "error";
                         hasher.Append(new ReadOnlySpan<byte>(buffer, 0, bytesRead));
                     }
                 }
@@ -721,7 +843,7 @@ namespace SteamRipApp.Core
                 {
                     Logger.Log("[Repair-Sync] Recreating .json from .dat reference...");
                     var files = LoadDatFile(datPath);
-                    if (files != null) File.WriteAllText(skelPath, JsonSerializer.Serialize(new FileSkeleton { Files = files }, new JsonSerializerOptions { WriteIndented = true }));
+                    if (files != null) File.WriteAllText(skelPath, JsonSerializer.Serialize(new FileSkeleton { Files = files }, _jsonOptions));
                 }
             }
             catch (Exception ex) { Logger.LogError("MetadataSync", ex); }
@@ -784,106 +906,334 @@ namespace SteamRipApp.Core
             catch { return null; }
         }
 
-        public static async Task<ArchiveMap?> GenerateArchiveMapAsync(string archivePath, string storagePath)
+        public static async Task<ArchiveMap?> GenerateArchiveMapAsync(string archivePath, string storagePath, string? version = null)
         {
             try
             {
-                Logger.Log($"[Repair-Mapping] 🗺️ STARTING PRECISION HYBRID MAP GENERATION for: {Path.GetFileName(archivePath)}");
+                Logger.Log($"[Repair-Mapping] 🗺️ STARTING PRECISION ARCHIVE MAPPING for: {Path.GetFileName(archivePath)}");
                 var map = new ArchiveMap { ArchiveName = Path.GetFileName(archivePath) };
-                long tempOffset = 0;
 
-                using (var rawStream = File.OpenRead(archivePath))
+                using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
+                    map.TotalArchiveSize = fs.Length;
 
-                    byte[] headData = new byte[8192];
-                    int headRead = await rawStream.ReadAsync(headData, 0, headData.Length);
-                    rawStream.Position = 0;
+                    Logger.Log("[Repair-Mapping] Phase 1: Performing low-level jumping scan...");
+                    bool scanSuccess = await RunPrecisionJumpingScannerAsync(fs, map);
 
-                    long firstFileOffset = 0;
-                    var prefix = TrimRarPrefix(headData.Take(headRead).ToArray(), out firstFileOffset);
-                    map.PrefixBase64 = Convert.ToBase64String(prefix);
-                    map.PrefixSize = firstFileOffset;
-                    map.TotalArchiveSize = rawStream.Length;
-                    Logger.Log($"[Repair-Mapping] Captured Prefix: {map.PrefixSize} bytes. First File @ {firstFileOffset}");
-
-                    tempOffset = firstFileOffset;
-                }
-
-                List<SharpCompress.Common.Rar.RarEntry> sharpEntries = new List<SharpCompress.Common.Rar.RarEntry>();
-                using (var archive = SharpCompress.Archives.Rar.RarArchive.Open(archivePath))
-                {
-                    foreach (var entry in archive.Entries)
+                    if (scanSuccess)
                     {
-                        if (!entry.IsDirectory) sharpEntries.Add(entry);
+                        Logger.Log($"[Repair-Mapping] Jumping scan found {map.Entries.Count} entries.");
                     }
-                }
-
-                using (var rawStream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                {
-                    rawStream.Position = tempOffset;
-                    BinaryReader br = new BinaryReader(rawStream);
-
-                    int entryIndex = 0;
-                    while (rawStream.Position < rawStream.Length && entryIndex < sharpEntries.Count)
+                    else
                     {
-                        long headerStartPos = rawStream.Position;
-
-                        if (rawStream.Position + 4 > rawStream.Length) break;
-                        uint crc = br.ReadUInt32();
-
-                        long headerSize = ReadVInt(br);
-                        long headerContentStart = rawStream.Position;
-                        long headerEndPos = headerContentStart + headerSize;
-
-                        long headerType = ReadVInt(br);
-                        long headerFlags = ReadVInt(br);
-
-                        if (headerType == 2)
+                        Logger.Log("[Repair-Mapping] ⚠️ Jumping scan failed. Clearing broken entries and falling back to CLI...");
+                        map.Entries.Clear();
+                        var unrarPath = ArchiveExtractor.FindUnRarCLI();
+                        if (unrarPath != null)
                         {
-                            long extraSize = (headerFlags & 0x0001) != 0 ? ReadVInt(br) : 0;
-                            long dataSize = (headerFlags & 0x0002) != 0 ? ReadVInt(br) : 0;
+                            await GenerateMapWithUnRarCLIAsync(archivePath, map, fs);
+                        }
+                    }
 
-                            var sharpEntry = sharpEntries[entryIndex++];
-
-                            map.Entries.Add(new ArchiveEntry
+                    if (map.Entries.Count == 0 || map.Entries.All(e => e.HeaderOffset == 0))
+                    {
+                        Logger.Log("[Repair-Mapping] Phase 2: Enriching metadata via UnRAR DLL...");
+                        var entries = await UnrarEngine.GetArchiveEntriesAsync(archivePath);
+                        foreach (var entry in entries)
+                        {
+                            var existing = map.Entries.FirstOrDefault(e => e.Path.Equals(entry.FileName, StringComparison.OrdinalIgnoreCase));
+                            if (existing == null)
                             {
-                                Path = (sharpEntry.Key ?? "Unknown").Replace("/", "\\"),
-                                HeaderOffset = headerStartPos,
-                                DataOffset = headerEndPos,
-                                PackedSize = dataSize,
-                                Size = sharpEntry.Size,
-                                RarVersion = "RAR5",
-                                Crc32 = (uint)sharpEntry.Crc
-                            });
-
-                            Logger.Log($"[Repair-Mapping] Mapped: {sharpEntry.Key} (Header: {headerStartPos}, Data: {headerEndPos}, Packed: {dataSize})");
-
-                            rawStream.Position = headerEndPos + dataSize;
+                                map.Entries.Add(new ArchiveEntry {
+                                    Path = entry.FileName.Replace('/', '\\'),
+                                    PackedSize = (long)entry.UnpackedSize,
+                                    Size = (long)entry.UnpackedSize,
+                                    Crc32 = entry.FileCRC,
+                                    Method = (byte)entry.Method,
+                                    RarVersion = "RAR4"
+                                });
+                            }
+                            else if (existing.Crc32 == 0)
+                            {
+                                existing.Crc32 = entry.FileCRC;
+                            }
                         }
-                        else
-                        {
-
-                            rawStream.Position = headerEndPos;
-                        }
-                    }
-
-                    if (map.Entries.Count > 0)
-                    {
-                        Directory.CreateDirectory(storagePath);
-                        string mapPath = Path.Combine(storagePath, MapFileName);
-                        File.WriteAllText(mapPath, JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = true }));
-                        Logger.Log($"[Repair-Mapping] ✅ PRECISION MAP COMPLETE: {mapPath} ({map.Entries.Count} entries)");
-
-                        WriteVersionFile(storagePath);
-                        return map;
                     }
                 }
+
+                if (map.Entries.Count > 0)
+                {
+                    Directory.CreateDirectory(storagePath);
+                    string mapPath = Path.Combine(storagePath, MapFileName);
+                    File.WriteAllText(mapPath, JsonSerializer.Serialize(map, _jsonOptions));
+                    Logger.Log($"[Repair-Mapping] ✅ Mapping complete. Mapped {map.Entries.Count} files.");
+
+                    WriteVersionFile(storagePath, version);
+                    return map;
+                }
+                return null;
             }
             catch (Exception ex)
             {
-                Logger.LogError("Repair-Mapping", ex);
+                Logger.LogError("GenerateArchiveMapAsync", ex);
+                return null;
             }
-            return null;
+        }
+
+        private static async Task<bool> RunPrecisionJumpingScannerAsync(FileStream fs, ArchiveMap map)
+        {
+            try
+            {
+                fs.Position = 0;
+                byte[] sig = new byte[8];
+                int sigRead = fs.Read(sig, 0, sig.Length);
+                if (sigRead < 7) return false;
+
+                bool isRar5 = IsRar5Signature(sig);
+                bool isRar4 = IsRar4Signature(sig);
+
+                if (!isRar5 && !isRar4) {
+                    Logger.Log("[Repair-Scanner] ❌ Unrecognized archive signature.");
+                    return false;
+                }
+
+                map.RarVersion = isRar5 ? "RAR5" : "RAR4";
+                Logger.Log($"[Repair-Scanner] 🔍 Detected Format: {map.RarVersion}");
+
+                long offset = isRar5 ? 8 : 7;
+                long firstFileOffset = -1;
+
+                while (offset < fs.Length)
+                {
+                    fs.Position = offset;
+                    byte[] buffer = new byte[4096];
+                    int read = fs.Read(buffer, 0, buffer.Length);
+                    if (read < 7) break;
+
+                    long headerStart = offset;
+                    long headSize = 0;
+                    long packedSize = 0;
+                    uint headType = 0;
+                    uint headFlags = 0;
+                    uint crc32 = 0;
+                    long unpSize = 0;
+                    string fileName = "";
+                    bool isDir = false;
+
+                    if (isRar5)
+                    {
+                        int ptr = 4;
+                        ulong blockSize = ReadVInt(buffer, ref ptr);
+                        int blockSizeLen = ptr - 4;
+                        ulong blockType = ReadVInt(buffer, ref ptr);
+                        ulong blockFlags = ReadVInt(buffer, ref ptr);
+
+                        long pSize = 0;
+                        if ((blockFlags & 0x01) != 0) ReadVInt(buffer, ref ptr);
+                        if ((blockFlags & 0x02) != 0) pSize = (long)ReadVInt(buffer, ref ptr);
+
+                        headType = (uint)blockType;
+                        headFlags = (uint)blockFlags;
+                        packedSize = pSize;
+
+                        headSize = 4 + blockSizeLen + (long)blockSize;
+
+                        if (headSize < 7 || headSize > 1024 * 1024) {
+                            Logger.Log($"[Repair-Scanner] ⚠️ INVALID RAR5 HEADER at {headerStart}: headSize({headSize}) seems wrong. Aborting precision scan.");
+                            return false;
+                        }
+
+                        if (headType == 1)
+                        {
+                            int ptr2 = ptr;
+                            ulong arcFlags = ReadVInt(buffer, ref ptr2);
+                            map.IsSolid = (arcFlags & 0x04) != 0;
+                            if (map.IsSolid) Logger.Log("[Repair-Scanner] 📦 Solid RAR5 archive detected.");
+                        }
+                        else if (headType == 2)
+                        {
+                            if (firstFileOffset == -1) firstFileOffset = headerStart;
+
+                            ulong fileFlags = ReadVInt(buffer, ref ptr);
+                            unpSize = (long)ReadVInt(buffer, ref ptr);
+                            ulong attr = ReadVInt(buffer, ref ptr);
+
+                            if ((fileFlags & 0x02) != 0) ptr += 4;
+                            if ((fileFlags & 0x04) != 0) { crc32 = BitConverter.ToUInt32(buffer, ptr); ptr += 4; }
+
+                            ReadVInt(buffer, ref ptr);
+                            ReadVInt(buffer, ref ptr);
+
+                            ulong nameLen = ReadVInt(buffer, ref ptr);
+                            if (ptr + (int)nameLen <= read)
+                            {
+                                fileName = Encoding.UTF8.GetString(buffer, ptr, (int)nameLen).Replace('/', '\\');
+                            }
+                            isDir = (fileFlags & 0x01) != 0;
+                        }
+                    }
+                    else
+                    {
+
+                        headType = buffer[2];
+                        headFlags = BitConverter.ToUInt16(buffer, 3);
+                        headSize = BitConverter.ToUInt16(buffer, 5);
+
+                        if (headType == 0x73)
+                        {
+                            map.IsSolid = (headFlags & 0x08) != 0;
+                            if (map.IsSolid) Logger.Log("[Repair-Scanner] 📦 Solid RAR4 archive detected.");
+                        }
+                        else if (headType == 0x74)
+                        {
+                            if (firstFileOffset == -1) firstFileOffset = headerStart;
+
+                            packedSize = BitConverter.ToUInt32(buffer, 7);
+                            unpSize = BitConverter.ToUInt32(buffer, 11);
+                            crc32 = BitConverter.ToUInt32(buffer, 16);
+                            ushort nameLen = BitConverter.ToUInt16(buffer, 25);
+                            uint attr = BitConverter.ToUInt32(buffer, 27);
+
+                            int ptr = 31;
+                            if ((headFlags & 0x100) != 0)
+                            {
+                                uint highPack = BitConverter.ToUInt32(buffer, ptr); ptr += 4;
+                                uint highUnp = BitConverter.ToUInt32(buffer, ptr); ptr += 4;
+                                packedSize |= (long)highPack << 32;
+                                unpSize |= (long)highUnp << 32;
+                            }
+
+                            fileName = Encoding.UTF8.GetString(buffer, ptr, nameLen).Replace('/', '\\');
+                            isDir = (attr & 0x10) != 0 || (packedSize == 0 && unpSize == 0);
+                        }
+
+                        if ((headFlags & 0x8000) == 0) packedSize = 0;
+                    }
+
+                    if ((headType == 2 || headType == 0x74) && !string.IsNullOrEmpty(fileName))
+                    {
+                        map.Entries.Add(new ArchiveEntry {
+                            Path = fileName,
+                            HeaderOffset = headerStart,
+                            DataOffset = headerStart + headSize,
+                            PackedSize = packedSize,
+                            Size = unpSize,
+                            Crc32 = crc32,
+                            IsDirectory = isDir,
+                            RarVersion = isRar5 ? "RAR5" : "RAR4"
+                        });
+                    }
+
+                    offset += headSize + packedSize;
+                    if (headSize == 0 && packedSize == 0) break;
+                }
+
+                if (firstFileOffset > 0)
+                {
+                    map.PrefixSize = firstFileOffset;
+                    byte[] prefBuf = new byte[Math.Min(8192, firstFileOffset)];
+                    fs.Position = 0;
+                    fs.ReadExactly(prefBuf, 0, prefBuf.Length);
+                    map.PrefixBase64 = Convert.ToBase64String(prefBuf);
+                }
+
+                return map.Entries.Count > 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[Repair-Mapping] Jumping scan error: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static async Task<bool> GenerateMapWithUnRarCLIAsync(string archivePath, ArchiveMap map, FileStream fs)
+        {
+            try
+            {
+                var exe = ArchiveExtractor.FindUnRarCLI();
+                if (exe == null) return false;
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = $"vt \"{archivePath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true
+                };
+
+                using var process = Process.Start(psi);
+                if (process == null) return false;
+
+                string output = await process.StandardOutput.ReadToEndAsync();
+                await process.WaitForExitAsync();
+
+                if (output.Contains("Solid: yes")) {
+                    map.IsSolid = true;
+                    Logger.Log("[Repair-Mapping] 📦 Solid archive detected via CLI.");
+                }
+
+                var blocks = output.Split("-----------", StringSplitOptions.RemoveEmptyEntries);
+                foreach (var block in blocks)
+                {
+                    if (!block.Contains("Name:")) continue;
+
+                    var name = NameRegex().Match(block).Groups[1].Value.Trim().Replace('/', '\\');
+                    var sizeMatch = SizeRegex().Match(block);
+                    var packedMatch = PackedSizeRegex().Match(block);
+                    var offsetMatch = FileOffsetRegex().Match(block);
+                    var crcMatch = CrcRegex().Match(block);
+                    var attrMatch = AttrRegex().Match(block);
+
+                    if (!offsetMatch.Success) continue;
+
+                    long headerOffset = long.Parse(offsetMatch.Groups[1].Value);
+                    long unpackedSize = sizeMatch.Success ? long.Parse(sizeMatch.Groups[1].Value) : 0;
+                    long packedSize = packedMatch.Success ? long.Parse(packedMatch.Groups[1].Value) : 0;
+                    uint crc = crcMatch.Success ? uint.Parse(crcMatch.Groups[1].Value, System.Globalization.NumberStyles.HexNumber) : 0;
+                    bool isDir = attrMatch.Success && attrMatch.Groups[1].Value.Trim().StartsWith("d");
+
+                    long dataOffset = headerOffset;
+
+                    if (!isDir && packedSize > 0)
+                    {
+
+                        byte[] buffer = new byte[64];
+                        fs.Position = headerOffset + 4;
+                        int read = fs.Read(buffer, 0, buffer.Length);
+
+                        int ptr = 0;
+                        ulong blockSize = ReadVInt(buffer, ref ptr);
+                        int blockSizeLen = ptr;
+                        ReadVInt(buffer, ref ptr);
+                        ulong flags = ReadVInt(buffer, ref ptr);
+                        if ((flags & 0x01) != 0) ReadVInt(buffer, ref ptr);
+                        long pSize = 0;
+                        if ((flags & 0x02) != 0) pSize = (long)ReadVInt(buffer, ref ptr);
+
+                        long headerTotalSize = 4 + blockSizeLen + (long)blockSize;
+                        dataOffset = headerOffset + headerTotalSize;
+                    }
+
+                    map.Entries.Add(new ArchiveEntry {
+                        Path = name,
+                        HeaderOffset = headerOffset,
+                        DataOffset = dataOffset,
+                        PackedSize = packedSize,
+                        Size = unpackedSize,
+                        Crc32 = crc,
+                        IsDirectory = isDir,
+                        RarVersion = block.Contains("Method: RAR5") ? "RAR5" : "RAR4",
+                    });
+                }
+
+                return map.Entries.Count > 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[Repair-Mapping] CLI parser exception: {ex.Message}");
+                return false;
+            }
         }
 
         public static async Task<RepairReport> AnalyzeGameAsync(string storagePath, string contentPath, string? snapshotName = null, Action<string, double>? onProgress = null, bool metadataOnly = false, bool earlyExit = false)
@@ -916,7 +1266,15 @@ namespace SteamRipApp.Core
                 }
 
                 var entries = map!.Entries;
-                var filteredEntries = entries.Where(e => !e.Path.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase) && !e.Path.StartsWith(".rip_", StringComparison.OrdinalIgnoreCase)).ToList();
+                var filteredEntries = entries.Where(e =>
+                    !e.Path.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.EndsWith(".url", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.Equals("Read_Me_Instructions.txt", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.Equals("How to Run.txt", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.Equals("folder.jpg", StringComparison.OrdinalIgnoreCase) &&
+                    !e.Path.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)
+                ).ToList();
 
                 string? commonRoot = null;
                 if (filteredEntries.Count > 0)
@@ -949,6 +1307,22 @@ namespace SteamRipApp.Core
                     int before = filteredEntries.Count;
                     filteredEntries = filteredEntries.Where(e => e.Path.Replace("/", "\\").StartsWith(commonRoot, StringComparison.OrdinalIgnoreCase)).ToList();
                     Logger.Log($"[Repair-Analyze] Scoped scan to '{commonRoot}'. Ignoring {before - filteredEntries.Count} files outside the game directory.");
+
+                    if (!Directory.Exists(Path.Combine(contentPath, commonRoot)))
+                    {
+                         Logger.Log($"[Repair-Analyze] ⚠️ Common root folder '{commonRoot}' not found on disk. Checking if files were extracted to root...");
+
+                         var sample = filteredEntries.FirstOrDefault(e => !e.IsDirectory);
+                         if (sample != null)
+                         {
+                             string stripped = sample.Path[commonRoot.Length..].TrimStart('\\', '/');
+                             if (File.Exists(Path.Combine(contentPath, stripped)))
+                             {
+                                 Logger.Log("[Repair-Analyze] 🛠️ Extraction shift detected. Adjusting content path to match extracted files.");
+
+                             }
+                         }
+                    }
                 }
 
                 int total = filteredEntries.Count;
@@ -957,45 +1331,64 @@ namespace SteamRipApp.Core
 
                 await Task.Run(() =>
                 {
+
+                    Logger.Log($"[Repair-Analyze] 📂 Starting directory pre-scan for {contentPath}...");
+                    var diskFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    try {
+                        foreach (var f in Directory.GetFiles(contentPath, "*", SearchOption.AllDirectories))
+                        {
+                            string name = Path.GetFileName(f);
+                            if (!diskFiles.ContainsKey(name)) diskFiles[name] = f;
+                        }
+                    } catch (Exception ex) {
+                        Logger.Log($"[Repair-Analyze] ⚠️ Pre-scan warning: {ex.Message}");
+                    }
+                    Logger.Log($"[Repair-Analyze] 📂 Pre-scan complete. Found {diskFiles.Count} unique filenames.");
+
                     Parallel.ForEach(filteredEntries, options, (entry, state) =>
                     {
+                        if (GlobalSettings.IsShuttingDown) return;
+                        if (entry.IsDirectory) return;
+
                         string relPath = entry.Path;
                         string fullPath = Path.Combine(contentPath, relPath);
 
-                        if (!File.Exists(fullPath) && commonRoot != null && relPath.StartsWith(commonRoot, StringComparison.OrdinalIgnoreCase))
-                        {
-                            string stripped = relPath[commonRoot.Length..];
-                            string strippedFullPath = Path.Combine(contentPath, stripped);
-                            if (File.Exists(strippedFullPath))
-                            {
-                                relPath = stripped;
-                                fullPath = strippedFullPath;
-                            }
-                        }
-
                         if (!File.Exists(fullPath))
                         {
 
-                            string fileName = Path.GetFileName(relPath);
-                            try
+                            if (commonRoot != null && relPath.StartsWith(commonRoot, StringComparison.OrdinalIgnoreCase))
                             {
-                                var found = Directory.GetFiles(contentPath, fileName, SearchOption.AllDirectories)
-                                             .FirstOrDefault(f => !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase));
-
-                                if (found != null)
+                                string stripped = relPath[commonRoot.Length..];
+                                string strippedFullPath = Path.Combine(contentPath, stripped);
+                                if (File.Exists(strippedFullPath))
                                 {
-                                    fullPath = found;
-                                    string newRel = Path.GetRelativePath(contentPath, found);
-                                    Logger.Log($"[Repair-Analyze] Self-Healed: Found shifted file '{fileName}' at {newRel}");
-                                    relPath = newRel;
+                                    relPath = stripped;
+                                    fullPath = strippedFullPath;
                                 }
                             }
-                            catch { }
                         }
 
                         if (!File.Exists(fullPath))
                         {
-                            lock (report.MissingFiles) report.MissingFiles.Add(entry.Path);
+                            string fileName = Path.GetFileName(relPath);
+                            if (diskFiles.TryGetValue(fileName, out string? foundPath))
+                            {
+                                fullPath = foundPath;
+                                relPath = Path.GetRelativePath(contentPath, foundPath);
+                                Logger.Log($"[Repair-Analyze] 🛠️ Shifted file detected: {fileName} -> {relPath}");
+                            }
+                        }
+
+                        if (!File.Exists(fullPath))
+                        {
+
+                            if (entry.IsDirectory || entry.Size == 0) return;
+
+                            lock (report.MissingFiles)
+                            {
+                                report.MissingFiles.Add(entry.Path);
+                                report.MissingSize += entry.Size;
+                            }
                             if (earlyExit) { state.Stop(); return; }
                             return;
                         }
@@ -1025,7 +1418,14 @@ namespace SteamRipApp.Core
                                     if (metadataOnly)
                                     {
                                         Logger.Log($"[Repair-Analyze] Metadata mismatch for {entry.Path}. Size:{fileSize}/{skelFile.Size}, Time:{fileTime}/{skelFile.FileTime}, ID:{fileId}/{skelFile.FileId}");
-                                        lock (report.CorruptedFiles) report.CorruptedFiles.Add(entry.Path);
+
+                                        if (entry.Path.Contains("onlinefix", StringComparison.OrdinalIgnoreCase)) return;
+
+                                        lock (report.CorruptedFiles)
+                                        {
+                                            report.CorruptedFiles.Add(entry.Path);
+                                            report.CorruptedSize += entry.Size;
+                                        }
                                         if (earlyExit) { state.Stop(); return; }
                                         return;
                                     }
@@ -1033,28 +1433,25 @@ namespace SteamRipApp.Core
                                 catch { }
                                 try
                                 {
-                                    int result = XXH64_HashFile(fullPath, out ulong hashValue);
-                                    string currentHash = "";
-                                    if (result == 0) currentHash = hashValue.ToString("x16");
 
-                                    if (string.IsNullOrEmpty(currentHash))
-                                    {
-                                        try {
-                                            using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                                            var xx = new System.IO.Hashing.XxHash64();
-                                            xx.Append(fs);
-                                            currentHash = BitConverter.ToUInt64(xx.GetCurrentHash().Reverse().ToArray()).ToString("x16");
-                                        } catch { }
-                                    }
+                                    string currentHash = ComputeXXHash64(fullPath);
 
-                                    if (!string.IsNullOrEmpty(currentHash) && currentHash != skelFile.Hash)
+                                    if (!string.IsNullOrEmpty(currentHash) && currentHash != "error" && currentHash != skelFile.Hash)
                                     {
                                         Logger.Log($"[Repair-Analyze] HASH MISMATCH for {entry.Path}: Local={currentHash}, Skeleton={skelFile.Hash}");
-                                        lock (report.CorruptedFiles) report.CorruptedFiles.Add(entry.Path);
+
+                                        if (entry.Path.Contains("onlinefix", StringComparison.OrdinalIgnoreCase)) return;
+
+                                        lock (report.CorruptedFiles)
+                                        {
+                                            report.CorruptedFiles.Add(entry.Path);
+                                            report.CorruptedSize += entry.Size;
+                                        }
                                         if (earlyExit) { state.Stop(); return; }
                                     }
-                                    else if (!string.IsNullOrEmpty(currentHash))
+                                    else if (!string.IsNullOrEmpty(currentHash) && currentHash != "error")
                                     {
+
                                         lock (skeleton)
                                         {
                                             skelFile.Size = fileSize;
@@ -1104,26 +1501,33 @@ namespace SteamRipApp.Core
                     }
                 }
 
-                if (!Directory.Exists(scanRoot))
+                await Task.Run(() =>
                 {
-                    Logger.Log($"[Repair-Analyze] ⚠️ Scan root not found: {scanRoot}. Skipping additions check.");
-                    return report;
-                }
-
-                var currentFiles = Directory.GetFiles(scanRoot, "*", SearchOption.AllDirectories)
-                                        .Where(f => !Path.GetFileName(f).StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) && !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase));
-
-                foreach (var fullPath in currentFiles)
-                {
-                    string rel = Path.GetRelativePath(contentPath, fullPath);
-                    if (!knownRelPaths.Contains(rel) && !trustedPaths.Contains(rel))
+                    if (!Directory.Exists(scanRoot))
                     {
-                        if (!rel.StartsWith("_CommonRedist", StringComparison.OrdinalIgnoreCase))
+                        Logger.Log($"[Repair-Analyze] ⚠️ Scan root not found: {scanRoot}. Skipping additions check.");
+                        return;
+                    }
+
+                    var currentFiles = Directory.GetFiles(scanRoot, "*", SearchOption.AllDirectories)
+                                            .Where(f => !Path.GetFileName(f).StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) && !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase));
+
+                    foreach (var fullPath in currentFiles)
+                    {
+                        if (GlobalSettings.IsShuttingDown) return;
+                        string rel = Path.GetRelativePath(contentPath, fullPath);
+                        if (!knownRelPaths.Contains(rel) && !trustedPaths.Contains(rel))
                         {
-                            report.AddedFiles.Add(rel);
+                            if (!rel.StartsWith("_CommonRedist", StringComparison.OrdinalIgnoreCase))
+                            {
+                                lock (report.AddedFiles)
+                                {
+                                    report.AddedFiles.Add(rel);
+                                }
+                            }
                         }
                     }
-                }
+                });
 
                 Logger.Log($"[Repair-Analyze] Total Added Files detected: {report.AddedFiles.Count}");
                 if (report.AddedFiles.Count > 0)
@@ -1141,7 +1545,7 @@ namespace SteamRipApp.Core
             }
             catch (Exception ex)
             {
-                report.Error = $"Analysis failed: {ex.Message}";
+                report.Error = ex.Message[..Math.Min(ex.Message.Length, 150)];
                 Logger.LogError("AnalyzeGame", ex);
             }
 
@@ -1343,22 +1747,37 @@ namespace SteamRipApp.Core
 
                                 if (skeleton != null)
                                 {
+
+                                    string fullOutPath = Path.Combine(contentPath, targetPath);
                                     lock (skeleton)
                                     {
-                                        var skelFile = skeleton.Files.FirstOrDefault(sf => sf.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase));
+
+                                        skeleton.Files.RemoveAll(sf =>
+                                            sf.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase) &&
+                                            !relPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+
+                                        var skelFile = skeleton.Files.FirstOrDefault(sf => sf.Path.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
                                         if (skelFile == null)
                                         {
-                                            skelFile = new SkeletonFile { Path = relPath };
+                                            skelFile = new SkeletonFile { Path = targetPath };
                                             skeleton.Files.Add(skelFile);
                                         }
-                                        skelFile.Size = entry.Size;
+
                                         try {
-                                            var fi = new FileInfo(Path.Combine(contentPath, relPath));
+                                            var fi = new FileInfo(fullOutPath);
                                             if (fi.Exists) {
-                                                skelFile.FileTime = fi.LastWriteTimeUtc.Ticks;
+                                                skelFile.Size = fi.Length;
+                                                skelFile.FileId = GetFileFingerprint(fullOutPath, out long fileTime);
+                                                skelFile.FileTime = fileTime;
                                                 skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
+
+                                                skelFile.Hash = ComputeXXHash64(fullOutPath);
+
+                                                Logger.Log($"[Repair] Updated skeleton for {targetPath}: Hash={skelFile.Hash}, Size={skelFile.Size}");
                                             }
-                                        } catch {}
+                                        } catch (Exception ex) {
+                                            Logger.Log($"[Repair] Warning: Failed to update metadata for {targetPath}: {ex.Message}");
+                                        }
                                     }
                                 }
                             }
@@ -1681,11 +2100,7 @@ namespace SteamRipApp.Core
                 if (oldMap == null) throw new Exception("Failed to load local repair map.");
 
                 string skelPath = Path.Combine(rootPath, SkeletonFileName);
-                FileSkeleton? skeleton = File.Exists(skelPath) ? JsonSerializer.Deserialize<FileSkeleton>(File.ReadAllText(skelPath), _jsonOptions) : new FileSkeleton();
-                if (skeleton == null) skeleton = new FileSkeleton();
-
-                var toDownload = new List<ArchiveEntry>();
-                var toDelete = new List<string>();
+                FileSkeleton skeleton = (File.Exists(skelPath) ? JsonSerializer.Deserialize<FileSkeleton>(File.ReadAllText(skelPath), _jsonOptions) : null) ?? new FileSkeleton();
 
                 Logger.Log($"[Update] Smart Update: Archive is {(newMap.IsSolid ? "SOLID" : "NON-SOLID")}");
                 if (newMap.IsSolid)
@@ -1693,64 +2108,66 @@ namespace SteamRipApp.Core
                     Logger.Log("[Update] ⚠️ WARNING: Solid archive detected. Individual file updates may fail if dictionary state is lost.");
                 }
 
-                foreach (var newEntry in newMap.Entries)
+                var toHashOnly = new List<ArchiveEntry>();
+                var toDownload = new List<ArchiveEntry>();
+                var toDelete = new List<string>();
+
+                await Task.Run(() =>
                 {
-                    string fullPath = Path.Combine(rootPath, SanitizePath(newEntry.Path));
-                    var oldEntry = oldMap.Entries.FirstOrDefault(e => e.Path.Equals(newEntry.Path, StringComparison.OrdinalIgnoreCase));
-                    var skelFile = skeleton.Files.FirstOrDefault(f => f.Path.Equals(newEntry.Path, StringComparison.OrdinalIgnoreCase));
+                    onProgress?.Invoke("Planning update...", 10);
 
-                    bool needsDownload = false;
+                    var oldMapDict = oldMap.Entries.ToDictionary(e => e.Path, e => e, StringComparer.OrdinalIgnoreCase);
+                    var skelDict = skeleton.Files.ToDictionary(f => f.Path, f => f, StringComparer.OrdinalIgnoreCase);
+                    var newMapDict = newMap.Entries.ToDictionary(e => e.Path, e => e, StringComparer.OrdinalIgnoreCase);
 
-                    if (oldEntry == null || oldEntry.Crc32 != newEntry.Crc32)
+                    foreach (var newEntry in newMap.Entries)
                     {
-                        needsDownload = true;
-                    }
-                    else if (!File.Exists(fullPath))
-                    {
-                        needsDownload = true;
-                    }
-                    else if (skelFile == null)
-                    {
-                        needsDownload = true;
-                    }
-                    else
-                    {
+                        if (newEntry.Path.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase)) continue;
 
-                        var fi = new FileInfo(fullPath);
-                        if (fi.Length != newEntry.Size)
+                        string fullPath = Path.Combine(rootPath, SanitizePath(newEntry.Path));
+                        oldMapDict.TryGetValue(newEntry.Path, out var oldEntry);
+                        skelDict.TryGetValue(newEntry.Path, out var skelFile);
+
+                        bool contentMatches = (oldEntry != null && oldEntry.Crc32 == newEntry.Crc32);
+                        bool fileExists = File.Exists(fullPath);
+                        bool sizeMatches = fileExists && new FileInfo(fullPath).Length == (long)newEntry.Size;
+
+                        if (!contentMatches || !fileExists || !sizeMatches)
                         {
-                            needsDownload = true;
+                            toDownload.Add(newEntry);
+                        }
+                        else if (skelFile == null)
+                        {
+                            toHashOnly.Add(newEntry);
                         }
                     }
 
-                    if (needsDownload)
+                    foreach (var oldEntry in oldMap.Entries)
                     {
-                        toDownload.Add(newEntry);
+                        if (!newMapDict.ContainsKey(oldEntry.Path))
+                        {
+                            toDelete.Add(oldEntry.Path);
+                        }
                     }
-                }
+                });
 
-                foreach (var oldEntry in oldMap.Entries)
+                Logger.Log($"[Update] Plans: {toDownload.Count} to update/download, {toHashOnly.Count} to re-verify, {toDelete.Count} to delete.");
+
+                await Task.Run(() =>
                 {
-                    if (!newMap.Entries.Any(e => e.Path.Equals(oldEntry.Path, StringComparison.OrdinalIgnoreCase)))
+                    foreach (var relPath in toDelete)
                     {
-                        toDelete.Add(oldEntry.Path);
+                        string fullPath = Path.Combine(rootPath, SanitizePath(relPath));
+                        if (File.Exists(fullPath))
+                        {
+                            Logger.Log($"[Update] Deleting removed file: {relPath}");
+                            try { File.Delete(fullPath); } catch { }
+                        }
+                        skeleton.Files.RemoveAll(f => f.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase));
                     }
-                }
+                });
 
-                Logger.Log($"[Update] Plans: {toDownload.Count} to update/download, {toDelete.Count} to delete.");
-
-                foreach (var relPath in toDelete)
-                {
-                    string fullPath = Path.Combine(rootPath, SanitizePath(relPath));
-                    if (File.Exists(fullPath))
-                    {
-                        Logger.Log($"[Update] Deleting removed file: {relPath}");
-                        File.Delete(fullPath);
-                    }
-                    skeleton.Files.RemoveAll(f => f.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase));
-                }
-
-                int total = toDownload.Count;
+                int total = toDownload.Count + toHashOnly.Count;
                 int current = 0;
                 object progressLock = new object();
 
@@ -1790,6 +2207,9 @@ namespace SteamRipApp.Core
                                             }
                                             skelFile.Hash = newHash;
                                             skelFile.Size = entry.Size;
+                                            skelFile.FileId = GetFileFingerprint(fullPath, out long fileTime);
+                                            skelFile.FileTime = fileTime;
+                                            skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
                                         }
                                     } catch (Exception ex) {
                                         Logger.Log($"[Update-Extract] ❌ Failed to extract {entry.Path}: {ex.Message}");
@@ -1805,7 +2225,7 @@ namespace SteamRipApp.Core
                 {
 
                     byte[] prefix = Convert.FromBase64String(newMap.PrefixBase64);
-                    var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 12, CancellationToken = ct };
+                    var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct };
 
                     await Parallel.ForEachAsync(toDownload, parallelOptions, async (entry, token) =>
                     {
@@ -1837,10 +2257,16 @@ namespace SteamRipApp.Core
                             double basePct = (Volatile.Read(ref current) * 100.0) / total;
                             double weight = 100.0 / total;
 
+                            long lastUpdate = 0;
                             await DownloadRangeToStreamWithProgressAsync(newUrl, rangeStart, chunkLen, extractionStream, (downloaded) => {
-                                string progStr = FormatProgressString(downloaded, chunkLen);
-                                double finePct = basePct + (weight * ((double)downloaded / chunkLen));
-                                onProgress?.Invoke($"{progStr} Restoring: {fileName}", finePct);
+                                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                                if (now - lastUpdate > 250 || downloaded == chunkLen)
+                                {
+                                    lastUpdate = now;
+                                    string progStr = FormatProgressString(downloaded, chunkLen);
+                                    double finePct = basePct + (weight * ((double)downloaded / chunkLen));
+                                    onProgress?.Invoke($"{progStr} Restoring: {fileName}", finePct);
+                                }
                             }, token);
 
                             extractionStream.Position = 0;
@@ -1864,6 +2290,7 @@ namespace SteamRipApp.Core
                             }
                         }
 
+                        onProgress?.Invoke($"Verifying: {Path.GetFileName(fullPath)}", (current * 100.0) / total);
                         string newHash = await Task.Run(() => ComputeXXHash64(fullPath));
                         lock (progressLock) {
                             var skelFile = skeleton.Files.FirstOrDefault(f => f.Path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase));
@@ -1873,8 +2300,39 @@ namespace SteamRipApp.Core
                             }
                             skelFile.Hash = newHash;
                             skelFile.Size = entry.Size;
+                            skelFile.FileId = GetFileFingerprint(fullPath, out long fileTime);
+                            skelFile.FileTime = fileTime;
+                            skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
                             current++;
                             onProgress?.Invoke($"Restoring: {Path.GetFileName(fullPath)}", (current * 100.0) / total);
+                        }
+                    });
+                }
+
+                if (toHashOnly.Count > 0)
+                {
+                    Logger.Log($"[Update] Re-verifying {toHashOnly.Count} identical files...");
+                    await Parallel.ForEachAsync(toHashOnly, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct }, async (entry, token) =>
+                    {
+                        string fullPath = Path.Combine(rootPath, SanitizePath(entry.Path));
+                        onProgress?.Invoke($"Verifying: {Path.GetFileName(fullPath)}", (current * 100.0) / total);
+
+                        string newHash = await Task.Run(() => ComputeXXHash64(fullPath));
+                        lock (progressLock) {
+                            var skelFile = skeleton.Files.FirstOrDefault(f => f.Path.Equals(entry.Path, StringComparison.OrdinalIgnoreCase));
+                            if (skelFile == null) {
+                                skelFile = new SkeletonFile { Path = entry.Path };
+                                skeleton.Files.Add(skelFile);
+                            }
+                            skelFile.Hash = newHash;
+                            try {
+                                var fi = new FileInfo(fullPath);
+                                skelFile.Size = fi.Length;
+                                skelFile.FileId = GetFileFingerprint(fullPath, out long fileTime);
+                                skelFile.FileTime = fileTime;
+                                skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
+                            } catch { }
+                            current++;
                         }
                     });
                 }
@@ -1928,17 +2386,18 @@ namespace SteamRipApp.Core
                 }
 
                 long offset = isRar5 ? 8 : 7;
-
                 byte[]? buffer = null;
                 long bufferStart = -1;
 
                 while (offset < map.TotalArchiveSize)
                 {
 
-                    if (buffer == null || offset < bufferStart || offset > bufferStart + buffer.Length - 2048)
+                    if (buffer == null || offset < bufferStart || offset >= bufferStart + buffer.Length)
                     {
-                        int fetchSize = (int)Math.Min(2 * 1024 * 1024, map.TotalArchiveSize - offset);
+                        int fetchSize = (int)Math.Min(16 * 1024 * 1024, map.TotalArchiveSize - offset);
                         if (fetchSize <= 0) break;
+
+                        Logger.Log($"[Leap-Scan] Fetching chunk at {offset} ({fetchSize} bytes)...");
                         buffer = await ReadRangeAsync(url, offset, fetchSize);
                         bufferStart = offset;
                     }
@@ -1948,17 +2407,13 @@ namespace SteamRipApp.Core
                     if (isRar5)
                     {
 
-                        if (buffer == null || offset < bufferStart || offset >= bufferStart + buffer.Length - 1024)
+                        if (headPtr + 7 > buffer.Length && offset + 7 < map.TotalArchiveSize)
                         {
-                            int fetchSize = 16 * 1024 * 1024;
-                            fetchSize = (int)Math.Min(fetchSize, map.TotalArchiveSize - offset);
-                            if (fetchSize <= 0) break;
-
-                            Logger.Log($"[Leap-Scan] Fetching 16MB chunk at {offset}...");
-                            buffer = await ReadRangeAsync(url, offset, fetchSize);
-                            bufferStart = offset;
+                             int fetchSize = (int)Math.Min(16 * 1024 * 1024, map.TotalArchiveSize - offset);
+                             buffer = await ReadRangeAsync(url, offset, fetchSize);
+                             bufferStart = offset;
+                             headPtr = 0;
                         }
-                        headPtr = (int)(offset - bufferStart);
 
                         if (headPtr + 4 > buffer.Length) break;
                         uint blockCrc = BitConverter.ToUInt32(buffer, headPtr); headPtr += 4;
@@ -1972,6 +2427,14 @@ namespace SteamRipApp.Core
                             break;
                         }
 
+                        if (headPtr + (int)blockSize > buffer.Length && offset + (int)blockSize < map.TotalArchiveSize)
+                        {
+                             int fetchSize = (int)Math.Min(16 * 1024 * 1024, map.TotalArchiveSize - offset);
+                             buffer = await ReadRangeAsync(url, offset, fetchSize);
+                             bufferStart = offset;
+                             headPtr = sizeStart + sizeLen;
+                        }
+
                         if (headPtr + (int)blockSize <= buffer.Length)
                         {
                             uint actualCrc = ComputeCRC32(buffer, sizeStart, sizeLen + (int)blockSize);
@@ -1980,11 +2443,6 @@ namespace SteamRipApp.Core
                                 Logger.Log($"[Repair] [RAR5] Integrity failure at {offset}. Expected CRC {blockCrc:X8}, got {actualCrc:X8}. Stopping.");
                                 break;
                             }
-                        }
-                        else
-                        {
-
-                            break;
                         }
 
                         ulong blockType = ReadVInt(buffer, ref headPtr);
@@ -2001,36 +2459,7 @@ namespace SteamRipApp.Core
 
                         Logger.Log($"[Leap-Trace] [RAR5] Block Type {blockType} at {offset}, HeadContent={blockSize}, Data={dataSize}");
 
-                        if (offset < bufferStart || offset + (long)blockSize + 32 >= bufferStart + buffer.Length)
-                        {
-                            int fetchSize = (int)Math.Max(16 * 1024 * 1024, (long)blockSize + 4096);
-                            fetchSize = (int)Math.Min(fetchSize, map.TotalArchiveSize - offset);
-                            if (fetchSize <= 0) break;
-
-                            Logger.Log($"[Leap-Scan] Fetching 16MB chunk at {offset} (Block Overrun)...");
-                            buffer = await ReadRangeAsync(url, offset, fetchSize);
-                            bufferStart = offset;
-                            headPtr = 0;
-
-                            uint bCrc = BitConverter.ToUInt32(buffer, headPtr); headPtr += 4;
-                            ReadVInt(buffer, ref headPtr);
-                            ReadVInt(buffer, ref headPtr);
-                            ReadVInt(buffer, ref headPtr);
-                            if ((blockFlags & 0x01) != 0) ReadVInt(buffer, ref headPtr);
-                            if ((blockFlags & 0x02) != 0) ReadVInt(buffer, ref headPtr);
-                        }
-                        else
-                        {
-
-                            headPtr = (int)(offset - bufferStart);
-
-                            headPtr += 4;
-                            ReadVInt(buffer, ref headPtr);
-                            ReadVInt(buffer, ref headPtr);
-                            ReadVInt(buffer, ref headPtr);
-                            if ((blockFlags & 0x01) != 0) ReadVInt(buffer, ref headPtr);
-                            if ((blockFlags & 0x02) != 0) ReadVInt(buffer, ref headPtr);
-                        }
+                        if (blockType == 5) break;
 
                         if (blockType == 1)
                         {
@@ -2073,7 +2502,7 @@ namespace SteamRipApp.Core
                                         Size = (long)unpackedSize,
                                         Crc32 = fileCrc,
                                         Method = method,
-                                        RarVersion = "RAR5"
+                                        RarVersion = "RAR5",
                                     });
                                 }
                             }
@@ -2211,74 +2640,132 @@ return ms.ToArray();
                 long downloaded = 0;
                 long destBasePos = destination.Position;
 
-                await Parallel.ForEachAsync(Enumerable.Range(0, numChunks), new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, async (i, token) =>
+                await Parallel.ForEachAsync(Enumerable.Range(0, numChunks), new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct }, async (i, token) =>
                 {
                     long chunkStart = i * (long)CHUNK_SIZE;
                     long chunkLen = Math.Min(CHUNK_SIZE, length - chunkStart);
 
-                    var request = new HttpRequestMessage(HttpMethod.Get, url);
-                    request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start + chunkStart, start + chunkStart + chunkLen - 1);
-                    request.Headers.UserAgent.ParseAdd(CommonUserAgent);
-                    if (url.Contains("gofile.io") && !string.IsNullOrEmpty(GoFileClient.AccountToken))
-                        request.Headers.Add("Cookie", $"accountToken={GoFileClient.AccountToken}");
+                    int retryCount = 0;
+                    const int MAX_RETRIES = 5;
+                    bool success = false;
 
-                    using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token))
+                    while (retryCount < MAX_RETRIES && !success)
                     {
-                        response.EnsureSuccessStatusCode();
-                        using (var stream = await response.Content.ReadAsStreamAsync(token))
+                        try
                         {
-                            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
-                            try {
-                                int read;
-                                long chunkPos = 0;
-                                while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                            var request = new HttpRequestMessage(HttpMethod.Get, url);
+                            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start + chunkStart, start + chunkStart + chunkLen - 1);
+                            request.Headers.UserAgent.ParseAdd(CommonUserAgent);
+                            if (url.Contains("gofile.io") && !string.IsNullOrEmpty(GoFileClient.AccountToken))
+                                request.Headers.Add("Cookie", $"accountToken={GoFileClient.AccountToken}");
+
+                            using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token))
+                            {
+                                if (response.StatusCode == (System.Net.HttpStatusCode)429)
                                 {
-                                    lock (destination)
-                                    {
-                                        destination.Position = destBasePos + chunkStart + chunkPos;
-                                        destination.Write(buffer, 0, read);
-                                    }
-                                    chunkPos += read;
-                                    long total = Interlocked.Add(ref downloaded, read);
-                                    onProgress?.Invoke(total);
+                                    retryCount++;
+                                    int delay = (int)Math.Pow(2, retryCount) * 1000;
+                                    Logger.Log($"[Repair] 429 Too Many Requests for chunk {i}. Retrying in {delay}ms... (Attempt {retryCount}/{MAX_RETRIES})");
+                                    await Task.Delay(delay, token);
+                                    continue;
                                 }
-                            } finally {
-                                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+
+                                response.EnsureSuccessStatusCode();
+                                using (var stream = await response.Content.ReadAsStreamAsync(token))
+                                {
+                                    byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+                                    try {
+                                        int read;
+                                        long chunkPos = 0;
+                                        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                                        {
+                                            lock (destination)
+                                            {
+                                                destination.Position = destBasePos + chunkStart + chunkPos;
+                                                destination.Write(buffer, 0, read);
+                                            }
+                                            chunkPos += read;
+                                            long total = Interlocked.Add(ref downloaded, read);
+                                            onProgress?.Invoke(total);
+                                        }
+                                        success = true;
+                                    } finally {
+                                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                                    }
+                                }
                             }
                         }
+                        catch (Exception ex) when (retryCount < MAX_RETRIES && (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException))
+                        {
+                            retryCount++;
+                            int delay = (int)Math.Pow(2, retryCount) * 1000;
+                            Logger.Log($"[Repair] Request failed for chunk {i}: {ex.Message}. Retrying in {delay}ms... (Attempt {retryCount}/{MAX_RETRIES})");
+                            await Task.Delay(delay, token);
+                        }
                     }
+
+                    if (!success) throw new Exception($"Failed to download chunk {i} after {MAX_RETRIES} attempts.");
                 });
 
                 destination.Position = destBasePos + length;
                 return;
             }
 
-            var singleReq = new HttpRequestMessage(HttpMethod.Get, url);
-            singleReq.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, start + length - 1);
-            singleReq.Headers.UserAgent.ParseAdd(CommonUserAgent);
-            if (url.Contains("gofile.io") && !string.IsNullOrEmpty(GoFileClient.AccountToken))
-                singleReq.Headers.Add("Cookie", $"accountToken={GoFileClient.AccountToken}");
-
-            using (var response = await _httpClient.SendAsync(singleReq, HttpCompletionOption.ResponseHeadersRead, ct))
+            int singleRetryCount = 0;
+            const int SINGLE_MAX_RETRIES = 5;
+            while (singleRetryCount < SINGLE_MAX_RETRIES)
             {
-                response.EnsureSuccessStatusCode();
-                using (var stream = await response.Content.ReadAsStreamAsync(ct))
+                try
                 {
-                    await DownloadRangeToStreamWithProgressAsync(stream, length, destination, onProgress, ct);
+                    var singleReq = new HttpRequestMessage(HttpMethod.Get, url);
+                    singleReq.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, start + length - 1);
+                    singleReq.Headers.UserAgent.ParseAdd(CommonUserAgent);
+                    if (url.Contains("gofile.io") && !string.IsNullOrEmpty(GoFileClient.AccountToken))
+                        singleReq.Headers.Add("Cookie", $"accountToken={GoFileClient.AccountToken}");
+
+                    using (var response = await _httpClient.SendAsync(singleReq, HttpCompletionOption.ResponseHeadersRead, ct))
+                    {
+                        if (response.StatusCode == (System.Net.HttpStatusCode)429)
+                        {
+                            singleRetryCount++;
+                            int delay = (int)Math.Pow(2, singleRetryCount) * 1000;
+                            Logger.Log($"[Repair] 429 Too Many Requests (Single). Retrying in {delay}ms... (Attempt {singleRetryCount}/{SINGLE_MAX_RETRIES})");
+                            await Task.Delay(delay, ct);
+                            continue;
+                        }
+
+                        response.EnsureSuccessStatusCode();
+                        using (var stream = await response.Content.ReadAsStreamAsync(ct))
+                        {
+                            await DownloadRangeToStreamWithProgressAsync(stream, length, destination, onProgress, ct);
+                        }
+                        return;
+                    }
+                }
+                catch (Exception ex) when (singleRetryCount < SINGLE_MAX_RETRIES && (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException))
+                {
+                    singleRetryCount++;
+                    int delay = (int)Math.Pow(2, singleRetryCount) * 1000;
+                    Logger.Log($"[Repair] Request failed (Single): {ex.Message}. Retrying in {delay}ms... (Attempt {singleRetryCount}/{SINGLE_MAX_RETRIES})");
+                    await Task.Delay(delay, ct);
                 }
             }
         }
 
         private static async Task DownloadRangeToStreamWithProgressAsync(Stream source, long length, Stream destination, Action<long>? onProgress, CancellationToken ct)
         {
-            byte[] buffer = new byte[81920];
-            long totalRead = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
-            {
-                await destination.WriteAsync(buffer, 0, read, ct);
-                totalRead += read;
-                onProgress?.Invoke(totalRead);
+            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+            try {
+                long totalRead = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                {
+                    await destination.WriteAsync(buffer, 0, read, ct);
+                    totalRead += read;
+                    onProgress?.Invoke(totalRead);
+                }
+            } finally {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
         }
 
@@ -2299,19 +2786,31 @@ return ms.ToArray();
         #endregion
 
         [GeneratedRegex(@"\.\d{8}_\d{6}\.(dir\.)?bak$")]
-        private static partial System.Text.RegularExpressions.Regex QuarantineSuffixRegex();
+        private static partial Regex QuarantineSuffixRegex();
+
+        [GeneratedRegex(@"Name:\s+(.+)")]
+        private static partial Regex NameRegex();
+
+        [GeneratedRegex(@"Size:\s+(\d+)")]
+        private static partial Regex SizeRegex();
+
+        [GeneratedRegex(@"Packed size:\s+(\d+)")]
+        private static partial Regex PackedSizeRegex();
+
+        [GeneratedRegex(@"File offset:\s+(\d+)")]
+        private static partial Regex FileOffsetRegex();
+
+        [GeneratedRegex(@"CRC32:\s+([0-9A-Fa-f]+)")]
+        private static partial Regex CrcRegex();
+
+        [GeneratedRegex(@"Attributes:\s+(.+)")]
+        private static partial Regex AttrRegex();
     }
 
-    public partial class PositionTrackingStream : Stream
+    public partial class PositionTrackingStream(Stream baseStream) : Stream
     {
-        private readonly Stream _baseStream;
-        private long _position;
-
-        public PositionTrackingStream(Stream baseStream)
-        {
-            _baseStream = baseStream;
-            _position = baseStream.Position;
-        }
+        private readonly Stream _baseStream = baseStream;
+        private long _position = baseStream.Position;
 
         public override bool CanRead => _baseStream.CanRead;
         public override bool CanSeek => _baseStream.CanSeek;
@@ -2335,7 +2834,7 @@ return ms.ToArray();
 
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            int read = await _baseStream.ReadAsync(buffer, offset, count, cancellationToken);
+            int read = await _baseStream.ReadAsync(buffer.AsMemory(offset, count), cancellationToken);
             _position += read;
             return read;
         }

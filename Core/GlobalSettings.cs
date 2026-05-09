@@ -9,7 +9,7 @@ using System.Linq;
 namespace SteamRipApp.Core
 {
     public enum ThemeMode { SyncWithWindows, Dark, Light }
-    public enum ExtractionMethod { UnRarDLL, WinRAR, SevenZip, Windows }
+    public enum ExtractionMethod { UnRarDLL, WinRAR, SevenZip }
     public enum SpeedUnit { Bits, Bytes }
 
     public class GameConfig
@@ -47,9 +47,14 @@ namespace SteamRipApp.Core
         public string FileId { get; set; } = "";
         public string LocalImagePath { get; set; } = "";
         public bool IsRedistMissing { get; set; }
+        public bool HasReadNote { get; set; }
+
+        public string HowToRunNote { get; set; } = "";
+
+        public string LatestVersion { get; set; } = "";
     }
 
-    public class ActiveDownloadMetadata : System.ComponentModel.INotifyPropertyChanged
+    public partial class ActiveDownloadMetadata : System.ComponentModel.INotifyPropertyChanged
     {
         private string _title = "";
         private string _url = "";
@@ -76,7 +81,7 @@ namespace SteamRipApp.Core
         public int ThreadCount { get => _threadCount; set { _threadCount = value; OnPropertyChanged(); } }
         public string SizeLabel { get => _sizeLabel; set { _sizeLabel = value; OnPropertyChanged(); } }
 
-        private bool _isPaused = true;
+        private bool _isPaused;
         public bool IsPaused { get => _isPaused; set { _isPaused = value; OnPropertyChanged(); OnPropertyChanged(nameof(PauseSymbol)); } }
         public string PauseSymbol => IsPaused ? "Play" : "Pause";
 
@@ -105,8 +110,18 @@ namespace SteamRipApp.Core
         }
 
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-        protected void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? name = null) =>
-            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+        protected void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? name = null)
+        {
+            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+            if (dispatcher != null && !dispatcher.HasThreadAccess)
+            {
+                dispatcher.TryEnqueue(() => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name)));
+            }
+            else
+            {
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+            }
+        }
     }
 
     public class MoveOperation
@@ -114,7 +129,7 @@ namespace SteamRipApp.Core
         public string SourcePath { get; set; } = "";
         public string TargetPath { get; set; } = "";
         public string GameTitle { get; set; } = "";
-        public List<string> CopiedFiles { get; set; } = new List<string>();
+        public List<string> CopiedFiles { get; set; } = [];
         public bool IsCopyFinished { get; set; }
         public DateTime StartTime { get; set; }
     }
@@ -126,12 +141,12 @@ namespace SteamRipApp.Core
         public bool IsSetupCompleted { get; set; }
         public bool HasSelectedDownloadDirectory { get; set; }
         public string DefaultDownloadSource { get; set; } = "Buzzheavier";
-        public List<string> ScanDirectories { get; set; } = new List<string>();
-        public List<GameMetadata> Library { get; set; } = new List<GameMetadata>();
-        public ObservableCollection<ActiveDownloadMetadata> ActiveDownloads { get; set; } = new ObservableCollection<ActiveDownloadMetadata>();
-        public Dictionary<string, GameConfig> GameConfigs { get; set; } = new Dictionary<string, GameConfig>();
-        public Dictionary<string, string> MemoryTable { get; set; } = new Dictionary<string, string>();
-        public Dictionary<string, string> GamePageLinks { get; set; } = new Dictionary<string, string>();
+        public List<string> ScanDirectories { get; set; } = [];
+        public List<GameMetadata> Library { get; set; } = [];
+        public ObservableCollection<ActiveDownloadMetadata> ActiveDownloads { get; set; } = [];
+        public Dictionary<string, GameConfig> GameConfigs { get; set; } = [];
+        public Dictionary<string, string> MemoryTable { get; set; } = [];
+        public Dictionary<string, string> GamePageLinks { get; set; } = [];
         public MoveOperation? CurrentMove { get; set; }
         public DateTime LastSpaceWarningTime { get; set; } = DateTime.MinValue;
         public ThemeMode AppThemeMode { get; set; } = ThemeMode.SyncWithWindows;
@@ -151,25 +166,27 @@ namespace SteamRipApp.Core
         public bool AntivirusExclusionAdded { get; set; }
         public bool IsAdvancedRepairVisible { get; set; } = false;
         public bool IsHddModeEnabled { get; set; } = false;
-        public string AppVersion { get; set; } = "1.4.9.4";
+        public string AppVersion { get; set; } = "1.5.2.5";
         public string? HashingProgress { get; set; }
         public bool IsSteamUpdateRequired { get; set; }
-        public string RepairLogicVersion { get; set; } = "1.2.1";
+        public string RepairLogicVersion { get; set; } = "1.4.0";
+        public double HashingProgressValue { get; set; }
     }
 
     public static class GlobalSettings
     {
+        public static bool IsShuttingDown { get; set; } = false;
         public static string DownloadDirectory { get; set; } = "";
         public static bool AutoDeleteArchive { get; set; } = true;
         public static bool IsSetupCompleted { get; set; }
         public static bool HasSelectedDownloadDirectory { get; set; }
         public static string DefaultDownloadSource { get; set; } = "Buzzheavier";
-        public static List<string> ScanDirectories { get; set; } = new List<string>();
-        public static List<GameMetadata> Library { get; set; } = new List<GameMetadata>();
-        public static ObservableCollection<ActiveDownloadMetadata> ActiveDownloads { get; set; } = new ObservableCollection<ActiveDownloadMetadata>();
-        public static Dictionary<string, GameConfig> GameConfigs { get; set; } = new Dictionary<string, GameConfig>();
-        public static Dictionary<string, string> MemoryTable { get; set; } = new Dictionary<string, string>();
-        public static Dictionary<string, string> GamePageLinks { get; set; } = new Dictionary<string, string>();
+        public static List<string> ScanDirectories { get; set; } = [];
+        public static List<GameMetadata> Library { get; set; } = [];
+        public static ObservableCollection<ActiveDownloadMetadata> ActiveDownloads { get; set; } = [];
+        public static Dictionary<string, GameConfig> GameConfigs { get; set; } = [];
+        public static Dictionary<string, string> MemoryTable { get; set; } = [];
+        public static Dictionary<string, string> GamePageLinks { get; set; } = [];
         public static MoveOperation? CurrentMove { get; set; }
         public static DateTime LastSpaceWarningTime { get; set; } = DateTime.MinValue;
         public static ThemeMode AppThemeMode { get; set; } = ThemeMode.SyncWithWindows;
@@ -177,7 +194,7 @@ namespace SteamRipApp.Core
         public static bool? RemoveFromSteamPreference { get; set; }
         public static string SelectedSteamAccountId { get; set; } = "";
         public static SpeedUnit DownloadSpeedUnit { get; set; } = SpeedUnit.Bits;
-        public static ExtractionMethod PreferredExtractionMethod { get; set; } = ExtractionMethod.WinRAR;
+        public static ExtractionMethod PreferredExtractionMethod { get; set; } = ExtractionMethod.UnRarDLL;
         public static bool IsSteamIntegrationEnabled { get; set; }
         public static bool IsAdvancedModeEnabled { get; set; }
         public static bool IsHardRepairEnabled { get; set; } = false;
@@ -192,8 +209,8 @@ namespace SteamRipApp.Core
         public static bool IsSteamUpdateRequired { get; set; }
         public static bool IsAdvancedRepairVisible { get; set; } = false;
         public static bool IsHddModeEnabled { get; set; } = false;
-        public static string AppVersion { get; set; } = "1.4.9.4";
-        public static string RepairLogicVersion { get; set; } = "1.3.0";
+        public static string AppVersion { get; set; } = "1.5.2.5";
+        public static string RepairLogicVersion { get; set; } = "1.4.0";
 
         private static readonly string SavePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamRipApp", "settings.json");
         private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
@@ -202,16 +219,15 @@ namespace SteamRipApp.Core
         {
             if (string.IsNullOrEmpty(title)) title = "Unknown";
             string raw = (title + (url ?? "")).ToLowerInvariant();
-            using var sha = System.Security.Cryptography.SHA1.Create();
-            byte[] bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(raw));
-            return Convert.ToHexStringLower(bytes).Substring(0, 20);
+            byte[] bytes = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
+            return Convert.ToHexStringLower(bytes)[..20];
         }
+
+        private static readonly object _saveLock = new();
 
         public static void Save()
         {
             try {
-                if (!Directory.Exists(Path.GetDirectoryName(SavePath)))
-                    Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
 
                 var data = new UserData {
                     DownloadDirectory = DownloadDirectory,
@@ -219,12 +235,12 @@ namespace SteamRipApp.Core
                     IsSetupCompleted = IsSetupCompleted,
                     HasSelectedDownloadDirectory = HasSelectedDownloadDirectory,
                     DefaultDownloadSource = DefaultDownloadSource,
-                    ScanDirectories = ScanDirectories,
-                    Library = Library,
-                    ActiveDownloads = ActiveDownloads,
-                    GameConfigs = GameConfigs,
-                    MemoryTable = MemoryTable,
-                    GamePageLinks = GamePageLinks,
+                    ScanDirectories = ScanDirectories.ToList(),
+                    Library = Library.ToList(),
+                    ActiveDownloads = new ObservableCollection<ActiveDownloadMetadata>(ActiveDownloads.ToList()),
+                    GameConfigs = new Dictionary<string, GameConfig>(GameConfigs),
+                    MemoryTable = new Dictionary<string, string>(MemoryTable),
+                    GamePageLinks = new Dictionary<string, string>(GamePageLinks),
                     CurrentMove = CurrentMove,
                     LastSpaceWarningTime = LastSpaceWarningTime,
                     AppThemeMode = AppThemeMode,
@@ -247,10 +263,21 @@ namespace SteamRipApp.Core
                     IsAdvancedRepairVisible = IsAdvancedRepairVisible,
                     IsHddModeEnabled = IsHddModeEnabled,
                     AppVersion = AppVersion,
-                    RepairLogicVersion = RepairLogicVersion
+                    RepairLogicVersion = RepairLogicVersion,
+                    HashingProgressValue = HashingProgressValue
                 };
-                string json = JsonSerializer.Serialize(data, _jsonOptions);
-                File.WriteAllText(SavePath, json);
+
+                Task.Run(() => {
+                    lock (_saveLock) {
+                        try {
+                            if (!Directory.Exists(Path.GetDirectoryName(SavePath)))
+                                Directory.CreateDirectory(Path.GetDirectoryName(SavePath)!);
+
+                            string json = JsonSerializer.Serialize(data, _jsonOptions);
+                            File.WriteAllText(SavePath, json);
+                        } catch { }
+                    }
+                });
             } catch { }
         }
 
@@ -274,10 +301,11 @@ namespace SteamRipApp.Core
                         IsSetupCompleted = data.IsSetupCompleted;
                         HasSelectedDownloadDirectory = data.HasSelectedDownloadDirectory;
                         DefaultDownloadSource = data.DefaultDownloadSource ?? "Buzzheavier";
+                        PreferredExtractionMethod = ExtractionMethod.UnRarDLL;
                         if (!HasSelectedDownloadDirectory && !string.IsNullOrEmpty(DownloadDirectory))
                             HasSelectedDownloadDirectory = true;
-                        ScanDirectories = data.ScanDirectories ?? new List<string>();
-                        Library = data.Library ?? new List<GameMetadata>();
+                        ScanDirectories = data.ScanDirectories ?? [];
+                        Library = data.Library ?? [];
 
                         if (data.ActiveDownloads != null)
                         {
@@ -290,9 +318,9 @@ namespace SteamRipApp.Core
                             }
                         }
 
-                        GameConfigs = data.GameConfigs ?? new Dictionary<string, GameConfig>();
-                        MemoryTable = data.MemoryTable ?? new Dictionary<string, string>();
-                        GamePageLinks = data.GamePageLinks ?? new Dictionary<string, string>();
+                        GameConfigs = data.GameConfigs ?? [];
+                        MemoryTable = data.MemoryTable ?? [];
+                        GamePageLinks = data.GamePageLinks ?? [];
                         CurrentMove = data.CurrentMove;
                         LastSpaceWarningTime = data.LastSpaceWarningTime;
                         AppThemeMode = data.AppThemeMode;
@@ -313,7 +341,7 @@ namespace SteamRipApp.Core
                         HashingProgress = data.HashingProgress;
                         IsSteamUpdateRequired = data.IsSteamUpdateRequired;
                         IsAdvancedRepairVisible = data.IsAdvancedRepairVisible;
-                        GlobalSettings.AppVersion = "1.4.9.1";
+                        GlobalSettings.AppVersion = data.AppVersion ?? "1.5.2.3";
                         RepairLogicVersion = data.RepairLogicVersion ?? "1.2.1";
                         IsHddModeEnabled = data.IsHddModeEnabled;
 

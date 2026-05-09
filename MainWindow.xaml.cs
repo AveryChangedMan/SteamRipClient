@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,12 @@ namespace SteamRipApp
 {
     public sealed partial class MainWindow : Window
     {
+
+        [DllImport("kernel32.dll", SetLastError = false)]
+        private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
         public MainWindow()
         {
             this.InitializeComponent();
@@ -30,10 +37,26 @@ namespace SteamRipApp
 
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
+            GlobalSettings.IsShuttingDown = true;
+            Logger.Log("[Main] 🛑 Shutdown requested. Synchronizing state...");
+
             _shutdownCts.Cancel();
             _hashingTimer?.Stop();
+
+            RepairService.StopBackgroundHashing();
             GlobalSettings.Save();
+
+            bool stopped = RepairService.WaitForHashingToStop(2500);
+            if (!stopped)
+            {
+                Logger.Log("[Main] ⚠️ Background tasks did not stop in time. Forcing termination.");
+            }
+
             Logger.Log("--- GUI SESSION CLOSED ---");
+
+            try { App._appMutex?.ReleaseMutex(); } catch { }
+
+            TerminateProcess(GetCurrentProcess(), 0);
         }
 
         private DispatcherTimer? _hashingTimer;
@@ -49,6 +72,7 @@ namespace SteamRipApp
                 NavView.SelectedItem = NavView.MenuItems[0];
                 ContentFrame.Navigate(typeof(HomePage));
                 NavView.Header = "Home";
+                Logger.Log("[MainWindow] Navigated to HomePage.");
             }
 
             CleanupActiveDownloads();
@@ -56,8 +80,10 @@ namespace SteamRipApp
 
             _ = CheckForUpdatesAsync(_shutdownCts.Token);
 
+            Logger.Log("[MainWindow] Finalizing activation...");
             await System.Threading.Tasks.Task.Delay(300);
             await CheckFirstRunSetupAsync();
+            Logger.Log("[MainWindow] FirstActivated complete.");
         }
 
         public void NavigateTo(Type pageType)
@@ -77,6 +103,11 @@ namespace SteamRipApp
                     HashingStatusArea.Visibility = Visibility.Visible;
                     HashingStatusText.Text = GlobalSettings.HashingProgress;
                     HashingProgressBar.Value = GlobalSettings.HashingProgressValue;
+
+                    if (GlobalProgressOverlay.Visibility == Visibility.Visible)
+                    {
+                        UpdateGlobalOverlay(GlobalSettings.HashingProgress, GlobalSettings.HashingProgressValue);
+                    }
                 }
                 else
                 {
@@ -94,7 +125,7 @@ namespace SteamRipApp
             HashingStatusArea.Visibility = Visibility.Collapsed;
         }
 
-        private void Backup_Click(object sender, RoutedEventArgs e)
+        private void Backup_Click(object _, RoutedEventArgs __)
         {
             if (!string.IsNullOrEmpty(_currentConfigPath))
             {
@@ -103,7 +134,7 @@ namespace SteamRipApp
             }
         }
 
-        private void ResetBackup_Click(object sender, RoutedEventArgs e)
+        private void ResetBackup_Click(object _, RoutedEventArgs __)
         {
             if (!string.IsNullOrEmpty(_currentConfigPath))
             {
@@ -114,7 +145,7 @@ namespace SteamRipApp
 
         public void UpdateAdvancedTabsVisibility()
         {
-            if (SteamNavItem != null)
+            if (SteamNavItem is not null)
                 SteamNavItem.Visibility = GlobalSettings.IsSteamIntegrationEnabled ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -125,7 +156,7 @@ namespace SteamRipApp
                 Logger.Log("[Update] Checking for app updates...");
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", "SteamRipApp");
-                string json = await client.GetStringAsync("https://api.github.com/repos/AveryChangedMan/SteamRipClient/releases/latest");
+                string json = await client.GetStringAsync("https://api.github.com/repos/AveryChangedMan/SteamRipClient/releases/latest", ct);
                 var doc = JsonDocument.Parse(json);
                 string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
                 if (string.IsNullOrEmpty(tag)) return;
@@ -164,12 +195,12 @@ namespace SteamRipApp
         {
             try
             {
-                var local = ParseVersion(localVersion);
-                var remote = ParseVersion(remoteVersion);
+                var (localX1, localX2, localX3, _) = ParseVersion(localVersion);
+                var (remoteX1, remoteX2, remoteX3, _) = ParseVersion(remoteVersion);
 
-                return remote.x1 > local.x1
-                    || (remote.x1 == local.x1 && remote.x2 > local.x2)
-                    || (remote.x1 == local.x1 && remote.x2 == local.x2 && remote.x3 > local.x3);
+                return remoteX1 > localX1
+                    || (remoteX1 == localX1 && remoteX2 > localX2)
+                    || (remoteX1 == localX1 && remoteX2 == localX2 && remoteX3 > localX3);
             }
             catch { return false; }
         }
@@ -192,40 +223,67 @@ namespace SteamRipApp
                 var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
                 var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
                 var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
-                
-                string[] possiblePaths = {
-                    System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "app_icon.ico"),
-                    System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
-                    System.IO.Path.Combine(Directory.GetCurrentDirectory(), "Assets", "app_icon.ico"),
-                    "Assets/app_icon.ico"
-                };
 
-                string? iconPath = possiblePaths.FirstOrDefault(p => System.IO.File.Exists(p));
+                string baseDir = AppContext.BaseDirectory;
+                string[] possiblePaths =
+                [
+                    Path.Combine(baseDir, "Assets", "app_icon.ico"),
+                    Path.Combine(baseDir, "app_icon.ico"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "Assets", "app_icon.ico"),
+                    "Assets/app_icon.ico",
+                    "app_icon.ico"
+                ];
+
+                string? iconPath = possiblePaths.FirstOrDefault(File.Exists);
 
                 if (!string.IsNullOrEmpty(iconPath))
                 {
+                    Logger.Log($"[MainWindow] Setting app icon from: {iconPath}");
                     appWindow.SetIcon(iconPath);
-                    
-                    // Native fallback for taskbar/Alt-Tab reliability
+
                     try {
-                        IntPtr hIcon = LoadImage(IntPtr.Zero, iconPath, 1, 0, 0, 0x00000010); // IMAGE_ICON, LR_LOADFROMFILE
-                        if (hIcon != IntPtr.Zero)
+                        const uint WM_SETICON = 0x0080;
+                        const uint IMAGE_ICON = 1;
+                        const uint LR_LOADFROMFILE = 0x00000010;
+                        const uint LR_SHARED = 0x00008000;
+
+                        IntPtr hIconSmall = LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_SHARED);
+                        if (hIconSmall != IntPtr.Zero) SendMessage(hWnd, WM_SETICON, (IntPtr)0, hIconSmall);
+
+                        IntPtr hIconBig = LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 32, 32, LR_LOADFROMFILE | LR_SHARED);
+                        if (hIconBig != IntPtr.Zero) SendMessage(hWnd, WM_SETICON, (IntPtr)1, hIconBig);
+
+                        if (TitleBarIcon != null)
                         {
-                            const uint WM_SETICON = 0x0080;
-                            SendMessage(hWnd, WM_SETICON, (IntPtr)0, hIcon); // Small icon
-                            SendMessage(hWnd, WM_SETICON, (IntPtr)1, hIcon); // Big icon
+                            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(iconPath));
+                            TitleBarIcon.Source = bitmap;
                         }
-                    } catch { }
+                    } catch (Exception ex) {
+                        Logger.Log($"[MainWindow] Win32 icon set error: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Logger.Log("[MainWindow] ⚠️ App icon file not found in any expected location.");
                 }
             } catch (Exception ex) {
-                Logger.Log($"[MainWindow] Failed to set window icon: {ex.Message}");
+                Logger.LogError("SetAppIcon", ex);
             }
         }
 
-        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private const int GWL_STYLE = -16;
+        private const long WS_CAPTION = 0x00C00000L;
+
+        [LibraryImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+        private static partial IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+        private static partial IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
-        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern IntPtr LoadImage(IntPtr hinst, string lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
 
         private void CleanupActiveDownloads()
@@ -315,16 +373,39 @@ namespace SteamRipApp
 
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
-            var current = ParseVersion(GlobalSettings.AppVersion);
-            var target = ParseVersion("1.4.9.4");
+            var (currentX1, currentX2, currentX3, _) = ParseVersion(GlobalSettings.AppVersion);
+            var (targetX1, targetX2, targetX3, _) = ParseVersion("1.5.2.5");
 
-            bool isOldVersion = (current.x1 < target.x1)
-                || (current.x1 == target.x1 && current.x2 < target.x2)
-                || (current.x1 == target.x1 && current.x2 == target.x2 && current.x3 < target.x3);
+            bool isOldVersion = (currentX1 < targetX1)
+                || (currentX1 == targetX1 && currentX2 < targetX2)
+                || (currentX1 == targetX1 && currentX2 == targetX2 && currentX3 < targetX3);
 
-            if (GlobalSettings.HasSelectedDownloadDirectory && !isOldVersion) return;
+            if (GlobalSettings.IsSetupCompleted && !isOldVersion) return;
+
+            if (string.IsNullOrEmpty(GlobalSettings.DownloadDirectory))
+            {
+
+                string defaultDownloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "SteamRip");
+                GlobalSettings.DownloadDirectory = defaultDownloads;
+                GlobalSettings.ScanDirectories.Clear();
+                GlobalSettings.ScanDirectories.Add(defaultDownloads);
+                GlobalSettings.HasSelectedDownloadDirectory = true;
+                GlobalSettings.HashingSpeedCapMB = 50;
+                GlobalSettings.PreferredExtractionMethod = ExtractionMethod.UnRarDLL;
+                GlobalSettings.Save();
+            }
+
             SetupOverlay.Visibility = Visibility.Visible;
             NavView.IsHitTestVisible = false;
+
+            if (!string.IsNullOrEmpty(GlobalSettings.DownloadDirectory))
+            {
+                Step1Path.Text = GlobalSettings.DownloadDirectory;
+                Step1Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+                Step3Status.Text = $"{GlobalSettings.ScanDirectories.Count} folder(s) configured.";
+                Step2Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+                Step3Icon.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Green);
+            }
         }
 
         private async void SetupSelectFolder_Click(object sender, RoutedEventArgs e)
@@ -423,7 +504,7 @@ namespace SteamRipApp
 
                         Process.Start(new ProcessStartInfo {
                             FileName = "powershell.exe",
-                            Arguments = $"-Command \"{psCommand}\"",
+                            Arguments = $"-WindowStyle Hidden -Command \"{psCommand}\"",
                             CreateNoWindow = true,
                             UseShellExecute = true,
                             Verb = "runas"
@@ -437,7 +518,7 @@ namespace SteamRipApp
                 GlobalSettings.ScanDirectories.Add(GlobalSettings.DownloadDirectory);
 
             GlobalSettings.IsSetupCompleted = true;
-            GlobalSettings.AppVersion = "1.4.9.4";
+            GlobalSettings.AppVersion = "1.5.2.5";
             GlobalSettings.Save();
 
             Logger.Log($"[Setup] Completed. Download Dir: {GlobalSettings.DownloadDirectory}");
@@ -659,6 +740,8 @@ namespace SteamRipApp
 
         public void OpenConfig(string path, string title, string? contentPath = null, string? exePath = null)
         {
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+
             _currentConfigPath = path;
             _currentContentPath = contentPath ?? path;
             if (!GlobalSettings.GameConfigs.ContainsKey(path))
@@ -676,18 +759,15 @@ namespace SteamRipApp
             string currentExe = config.ManualExePath ?? "";
             bool isUtility = !string.IsNullOrEmpty(currentExe) && (currentExe.Contains("crashpad", StringComparison.OrdinalIgnoreCase) || currentExe.Contains("handler", StringComparison.OrdinalIgnoreCase));
 
-            if (string.IsNullOrEmpty(config.ManualExePath) || isUtility)
-            {
-                if (!string.IsNullOrEmpty(exePath) && !exePath.Contains("crashpad", StringComparison.OrdinalIgnoreCase) && !exePath.Contains("handler", StringComparison.OrdinalIgnoreCase))
-                    config.ManualExePath = exePath;
-                else
+                if (string.IsNullOrEmpty(config.ManualExePath) || isUtility)
                 {
-                    var exes = Directory.GetFiles(path, "*.exe", SearchOption.AllDirectories)
-                                        .Where(f => !f.Contains("crashpad", StringComparison.OrdinalIgnoreCase) && !f.Contains("handler", StringComparison.OrdinalIgnoreCase))
-                                        .OrderByDescending(f => new FileInfo(f).Length)
-                                        .ToList();
-                    if (exes.Count > 0) config.ManualExePath = exes[0];
-                }
+                    if (!string.IsNullOrEmpty(exePath) && !exePath.Contains("crashpad", StringComparison.OrdinalIgnoreCase) && !exePath.Contains("handler", StringComparison.OrdinalIgnoreCase))
+                        config.ManualExePath = exePath;
+                    else
+                    {
+
+                        config.ManualExePath = ScannerEngine.FindExecutable(path, title) ?? "";
+                    }
 
                 if (!string.IsNullOrEmpty(config.ManualExePath))
                     config.WorkingDir = System.IO.Path.GetDirectoryName(config.ManualExePath) ?? string.Empty;
@@ -771,9 +851,9 @@ namespace SteamRipApp
 
             AddConfigNumber("Launch Delay (seconds)", config.LaunchDelaySeconds, (val) => config.LaunchDelaySeconds = val);
 
-            AddConfigCombo("CPU Priority", new[] { "Low", "Normal", "High", "Realtime" }, config.CpuPriority, (val) => config.CpuPriority = val);
+            AddConfigCombo("CPU Priority", ["Low", "Normal", "High", "Realtime"], config.CpuPriority, (val) => config.CpuPriority = val);
 
-            AddConfigCombo("Compatibility Mode", new[] { "None", "Windows 7", "Windows 8" }, 0, (val) => { });
+            AddConfigCombo("Compatibility Mode", ["None", "Windows 7", "Windows 8"], 0, (val) => { });
 
             if (meta.IsEmulatorApplied)
             {
@@ -843,58 +923,20 @@ namespace SteamRipApp
                 newFilesPanel.Children.Add(scanAgainBtn);
                 ConfigOptionsList.Children.Add(newFilesPanel);
 
-                var integrityBtnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0,0,0,12) };
-                var backupBtn = new Button {
-                    Content = "💾 Manual Backup [UNSTABLE]",
-                    Padding = new Thickness(12, 6, 12, 6)
-                };
-                backupBtn.Click += async (s, e) => {
-                    if (await ShowUnstableWarningAsync("Manual Backup")) {
-                        RepairService.TriggerManualBackup(path, contentPath ?? path);
-                        ConfigOverlay.Visibility = Visibility.Collapsed;
-                    }
-                };
-
-                var integrityResetBtn = new Button {
-                    Content = "🗑 Reset Integrity [UNSTABLE]",
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
-                    Padding = new Thickness(12, 6, 12, 6)
-                };
-                integrityResetBtn.Click += async (s, e) => {
-                    if (await ShowUnstableWarningAsync("Reset Integrity")) {
-                        RepairService.StopHashingForGame(path);
-                        ConfigOverlay.Visibility = Visibility.Collapsed;
-                    }
-                };
-
-                integrityBtnRow.Children.Add(backupBtn);
-                integrityBtnRow.Children.Add(integrityResetBtn);
-                ConfigOptionsList.Children.Add(integrityBtnRow);
         }
 
-        private async Task<bool> ShowUnstableWarningAsync(string feature)
-        {
-            var dialog = new ContentDialog
-            {
-                Title = "⚠️ Unstable Operation",
-                Content = $"The '{feature}' feature is currently experimental and may cause data loss or corrupt integrity maps.\n\nPlease refer to the 'Advanced Repair Guidelines' before proceeding.\n\nContinue anyway?",
-                PrimaryButtonText = "Proceed",
-                CloseButtonText = "Cancel",
-                XamlRoot = this.Content.XamlRoot
-            };
-            return await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary;
-        }
-
-        private void AddConfigText(string label, string value, Action<string> onUpdate) {
-            ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
+        private static void AddConfigText(string label, string value, Action<string> onUpdate) {
+            if (App.MainWindowInstance is not MainWindow win) return;
+            win.ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
             var tb = new TextBox { Text = value };
             tb.TextChanged += (s, e) => onUpdate(tb.Text);
-            ConfigOptionsList.Children.Add(tb);
+            win.ConfigOptionsList.Children.Add(tb);
         }
 
-        private void AddConfigPath(string label, string value, Action<string> onUpdate, bool isFolder)
+        private static void AddConfigPath(string label, string value, Action<string> onUpdate, bool isFolder)
         {
-            ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 12, 0, 4), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            if (App.MainWindowInstance is not MainWindow win) return;
+            win.ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 12, 0, 4), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
@@ -903,41 +945,42 @@ namespace SteamRipApp
             tb.TextChanged += (s, e) => onUpdate(tb.Text);
             grid.Children.Add(tb);
 
-            var openBtn = new Button { Content = "📂", Margin = new Thickness(8, 0, 0, 0) };
-            ToolTipService.SetToolTip(openBtn, "Open in Explorer");
-            openBtn.Click += (s, e) => {
-                try {
-                    string target = tb.Text;
-                    if (string.IsNullOrEmpty(target)) return;
-                    if (File.Exists(target)) target = Path.GetDirectoryName(target) ?? target;
-                    if (Directory.Exists(target)) Process.Start("explorer.exe", target);
-                } catch { }
+            var btn = new Button { Content = "Browse", Margin = new Thickness(8, 0, 0, 0) };
+            btn.Click += async (s, e) => {
+                string? picked = isFolder ? await PickerService.PickFolderAsync() : await PickerService.PickFileAsync();
+                if (!string.IsNullOrEmpty(picked)) {
+                    tb.Text = picked;
+                    onUpdate(picked);
+                }
             };
-            Grid.SetColumn(openBtn, 1);
-            grid.Children.Add(openBtn);
-            ConfigOptionsList.Children.Add(grid);
+            Grid.SetColumn(btn, 1);
+            grid.Children.Add(btn);
+            win.ConfigOptionsList.Children.Add(grid);
         }
 
-        private void AddConfigToggle(string label, bool val, Action<bool> onUpdate) {
+        private static void AddConfigToggle(string label, bool val, Action<bool> onUpdate) {
+            if (App.MainWindowInstance is not MainWindow win) return;
             var ts = new ToggleSwitch { Header = label, IsOn = val, Margin = new Thickness(0, 8, 0, 0) };
             ts.Toggled += (s, e) => onUpdate(ts.IsOn);
-            ConfigOptionsList.Children.Add(ts);
+            win.ConfigOptionsList.Children.Add(ts);
         }
 
-        private void AddConfigNumber(string label, int val, Action<int> onUpdate) {
-            ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
+        private static void AddConfigNumber(string label, int val, Action<int> onUpdate) {
+            if (App.MainWindowInstance is not MainWindow win) return;
+            win.ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
             var nb = new NumberBox { Value = val, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
             nb.ValueChanged += (s, e) => onUpdate((int)nb.Value);
-            ConfigOptionsList.Children.Add(nb);
+            win.ConfigOptionsList.Children.Add(nb);
         }
 
-        private void AddConfigCombo(string label, string[] items, int selected, Action<int> onUpdate) {
-            ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
+        private static void AddConfigCombo(string label, string[] items, int selected, Action<int> onUpdate) {
+            if (App.MainWindowInstance is not MainWindow win) return;
+            win.ConfigOptionsList.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 8, 0, 4) });
             var cb = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
             foreach (var item in items) cb.Items.Add(item);
             cb.SelectedIndex = selected;
             cb.SelectionChanged += (s, e) => onUpdate(cb.SelectedIndex);
-            ConfigOptionsList.Children.Add(cb);
+            win.ConfigOptionsList.Children.Add(cb);
         }
 
         private TaskCompletionSource<string>? _repairUrlTcs;

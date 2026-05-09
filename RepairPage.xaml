@@ -22,64 +22,55 @@
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="core:GameFolder">
                     <Border Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
-                            CornerRadius="12" Width="360" Margin="0,0,16,16" Padding="16">
-                        <StackPanel Spacing="12">
-
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="60"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Border CornerRadius="8" Width="50" Height="50" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
-                                    <Image Source="{Binding LocalImagePath}" Stretch="UniformToFill"/>
-                                </Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding Drive}" Opacity="0.6" FontSize="12"/>
-                                </StackPanel>
-                            </Grid>
-
-                            <Rectangle Height="1" Fill="{ThemeResource SystemControlBackgroundBaseLowBrush}" Opacity="0.1"/>
-
-                            <TextBlock Text="Integrity Actions" FontWeight="SemiBold" FontSize="12" Opacity="0.5"/>
-
-                            <Button Content="🛠 Repair Game"
-                                    HorizontalAlignment="Stretch"
-                                    Style="{StaticResource AccentButtonStyle}"
-                                    Click="RepairGame_Click" Tag="{Binding RootPath}"/>
-
-                            <StackPanel Spacing="8"
-                                        Visibility="{Binding IsAdvancedRepairVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                            CornerRadius="12" Width="360" Margin="0,0,16,16" Padding="0">
+                        <Grid>
+                            <StackPanel Spacing="12" Padding="16">
 
                                 <Grid>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="60"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-
-                                    <Button Content="📸 Snapshot"
-                                            HorizontalAlignment="Stretch" Margin="0,0,4,0"
-                                            Click="CreateSnapshot_Click" Tag="{Binding RootPath}"
-                                            ToolTipService.ToolTip="Create a new integrity snapshot of the current files."/>
-
-                                    <ComboBox Grid.Column="1"
-                                              HorizontalAlignment="Stretch" Margin="4,0,0,0"
-                                              PlaceholderText="Official Rip Map"
-                                              ItemsSource="{Binding Snapshots}"
-                                              SelectedItem="{Binding SelectedSnapshot, Mode=TwoWay}"/>
+                                    <Border CornerRadius="8" Width="50" Height="50" Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
+                                        <Image Source="{Binding LocalImagePath}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="16" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Drive}" Opacity="0.6" FontSize="12"/>
+                                    </StackPanel>
                                 </Grid>
 
-                                <Button Content="🗑 Reset Integrity Data"
+                                <Rectangle Height="1" Fill="{ThemeResource SystemControlBackgroundBaseLowBrush}" Opacity="0.1"/>
+
+                                <TextBlock Text="Integrity Actions" FontWeight="SemiBold" FontSize="12" Opacity="0.5"/>
+
+                                <Button Content="🛠 Repair Game"
                                         HorizontalAlignment="Stretch"
-                                        FontSize="11" Opacity="0.7"
-                                        Foreground="OrangeRed" BorderThickness="0"
-                                        Click="ResetHashes_Click" Tag="{Binding RootPath}"/>
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        Click="RepairGame_Click" Tag="{Binding RootPath}"/>
+
                             </StackPanel>
 
-                        </StackPanel>
+                            <Border Background="#F20F0F1B" CornerRadius="12"
+                                    Visibility="{Binding IsInProgress, Converter={StaticResource BoolToVisibilityConverter}}"
+                                    Canvas.ZIndex="10">
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16" Padding="20">
+                                    <TextBlock Text="{Binding ProgressPhase}" HorizontalAlignment="Center" FontWeight="Bold" Foreground="#0078D4"/>
+                                    <Grid Height="60" Width="60">
+                                        <ProgressRing IsActive="True" Foreground="#0078D4" Width="60" Height="60"/>
+                                        <TextBlock Text="{Binding ProgressPercentage, Converter={StaticResource PercentStringConverter}}"
+                                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                   FontSize="12" FontWeight="Bold"/>
+                                    </Grid>
+                                    <TextBlock Text="{Binding ProgressDetails}" FontSize="11" Opacity="0.8" TextAlignment="Center" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
                     </Border>
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
+
+        <ProgressRing x:Name="LoadingRing" Grid.Row="1" Width="50" Height="50" IsActive="False" VerticalAlignment="Center" HorizontalAlignment="Center"/>
     </Grid>
 </Page>

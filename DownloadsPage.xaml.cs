@@ -89,6 +89,7 @@ namespace SteamRipApp
                     if (dl != null) {
                         dl.IsPaused = true;
                         dl.Status = "⏸ Paused";
+                        dl.NotifyAll();
                     }
                 }
                 else if (downloader.State == DownloadState.Paused)
@@ -97,6 +98,7 @@ namespace SteamRipApp
                     if (dl != null) {
                         dl.IsPaused = false;
                         dl.Status = "▶ Resuming...";
+                        dl.NotifyAll();
                     }
                 }
             }
@@ -128,8 +130,16 @@ namespace SteamRipApp
                     dl.SteamRipUrl = session.SteamRipUrl;
                     dl.Version = session.Version;
                     dl.ImageUrl = session.ImageUrl;
-                    dl.NotifyAll();
                 }
+
+                if (string.IsNullOrEmpty(dl.Version) && !string.IsNullOrEmpty(dl.SteamRipUrl))
+                {
+                    try {
+                        var details = await SteamRipScraper.GetGameDetailsAsync(dl.SteamRipUrl);
+                        dl.Version = details.LatestVersion;
+                    } catch { }
+                }
+                dl.NotifyAll();
 
                 _ = new DownloadSessionMetadata
                 {
@@ -239,6 +249,7 @@ namespace SteamRipApp
                         }
                         dl.NotifyAll();
                         GlobalSettings.Save();
+                        RefreshDownloads();
                     });
                 };
 
@@ -365,17 +376,17 @@ namespace SteamRipApp
                 }
 
                 var session = DownloadSessionMetadata.Load(dl.DestPath);
-                string gameTitle = dl.Title;
-                string steamRipUrl = dl.SteamRipUrl;
-                string imageUrl = dl.ImageUrl;
-                string version = dl.Version;
+                string gameTitle = dl.Title ?? "Unknown Game";
+                string steamRipUrl = dl.SteamRipUrl ?? "";
+                string imageUrl = dl.ImageUrl ?? "";
+                string version = dl.Version ?? "";
 
                 if (session != null)
                 {
-                    gameTitle = session.GameTitle;
-                    steamRipUrl = session.SteamRipUrl;
-                    imageUrl = session.ImageUrl;
-                    version = session.Version;
+                    gameTitle = session.GameTitle ?? gameTitle;
+                    steamRipUrl = session.SteamRipUrl ?? steamRipUrl;
+                    imageUrl = session.ImageUrl ?? imageUrl;
+                    version = session.Version ?? version;
 
                     dl.Title = gameTitle;
                     dl.Version = version;
@@ -410,6 +421,7 @@ namespace SteamRipApp
                     }
                     dl.NotifyAll();
                     GlobalSettings.Save();
+                    RefreshDownloads();
                 });
             } catch (Exception ex) {
                 Logger.LogError("DownloadsPage.ExtractOnly", ex);

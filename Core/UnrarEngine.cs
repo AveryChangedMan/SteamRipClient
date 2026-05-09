@@ -83,19 +83,21 @@ namespace SteamRipApp.Core
             string archivePath,
             string outputDir,
             Action<double>? onProgress = null,
+            Action<string>? onStatus = null,
             CancellationToken ct = default)
         {
 
             string dllDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Deps");
             SetDllDirectory(dllDir);
 
-            return await Task.Run(() => ExtractInternal(archivePath, outputDir, onProgress, ct));
+            return await Task.Run(() => ExtractInternal(archivePath, outputDir, onProgress, onStatus, ct));
         }
 
         private static unsafe bool ExtractInternal(
             string archivePath,
             string outputDir,
             Action<double>? onProgress,
+            Action<string>? onStatus,
             CancellationToken ct)
         {
             var data = new RAROpenArchiveDataEx
@@ -119,9 +121,11 @@ namespace SteamRipApp.Core
                 long currentUnpackedSize = 0;
                 int fileCount = 0;
 
+                onStatus?.Invoke("🔍 Analyzing archive structure...");
                 var header = new RARHeaderDataEx();
                 while (RARReadHeaderEx(hArchive, ref header) == 0)
                 {
+                    if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return false;
                     totalUnpackedSize += ((long)header.UnpSizeHigh << 32) | header.UnpSize;
                     fileCount++;
                     RARProcessFile(hArchive, RAR_SKIP, null, null);
@@ -134,11 +138,23 @@ namespace SteamRipApp.Core
                 }
 
                 RARCloseArchive(hArchive);
+
+                data.OpenResult = 0;
+                data.CmtState = 0;
+
                 hArchive = RAROpenArchiveEx(ref data);
-                if (hArchive == IntPtr.Zero) return false;
+                if (hArchive == IntPtr.Zero || data.OpenResult != 0)
+                {
+                    Logger.Log($"[UnrarEngine] Failed to re-open archive for extraction (Error {data.OpenResult})");
+                    return false;
+                }
+
+                onStatus?.Invoke($"📦 Extracting {fileCount} files...");
 
                 _callback = (msg, userData, p1, p2) =>
                 {
+                    if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return -1;
+
                     if (msg == UCM_PROCESSDATA)
                     {
                         long size = p2.ToInt64();
@@ -149,7 +165,7 @@ namespace SteamRipApp.Core
                             onProgress?.Invoke(Math.Min(pct, 100));
                         }
                     }
-                    return ct.IsCancellationRequested ? -1 : 1;
+                    return 0;
                 };
 
                 RARSetCallback(hArchive, _callback, IntPtr.Zero);
@@ -157,11 +173,12 @@ namespace SteamRipApp.Core
                 int extractedCount = 0;
                 while (RARReadHeaderEx(hArchive, ref header) == 0)
                 {
-                    if (ct.IsCancellationRequested) return false;
+                    if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return false;
+
+                    string fileName = Marshal.PtrToStringUni((IntPtr)header.FileNameW) ?? "unknown";
                     int result = RARProcessFile(hArchive, RAR_EXTRACT, outputDir, null);
                     if (result != 0)
                     {
-                        string fileName = Marshal.PtrToStringUni((IntPtr)header.FileNameW) ?? "unknown";
                         Logger.Log($"[UnrarEngine] Error extracting {fileName}: {result}");
                         return false;
                     }
@@ -177,11 +194,79 @@ namespace SteamRipApp.Core
             }
             finally
             {
-                if (hArchive != IntPtr.Zero) RARCloseArchive(hArchive);
+                if (hArchive != IntPtr.Zero) {
+                    RARSetCallback(hArchive, null!, IntPtr.Zero);
+                    RARCloseArchive(hArchive);
+                }
                 if (data.ArcNameW != IntPtr.Zero) Marshal.FreeHGlobal(data.ArcNameW);
                 if (data.ArcName != IntPtr.Zero) Marshal.FreeHGlobal(data.ArcName);
                 _callback = null;
             }
+        }
+
+        public class ArchiveEntryInfo
+        {
+            public string FileName { get; set; } = "";
+            public ulong UnpackedSize { get; set; }
+            public uint FileCRC { get; set; }
+            public uint Method { get; set; }
+            public long HeaderOffset { get; set; }
+            public long DataOffset { get; set; }
+            public long PackedSize { get; set; }
+            public bool IsDirectory { get; set; }
+        }
+
+        public static async Task<List<ArchiveEntryInfo>> GetArchiveEntriesAsync(string archivePath)
+        {
+            string dllDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Deps");
+            SetDllDirectory(dllDir);
+
+            return await Task.Run(() =>
+            {
+                unsafe
+                {
+                var list = new List<ArchiveEntryInfo>();
+                var data = new RAROpenArchiveDataEx
+                {
+                    ArcNameW = Marshal.StringToHGlobalUni(archivePath),
+                    OpenMode = 1,
+                    Reserved = new uint[32]
+                };
+
+                IntPtr hArchive = RAROpenArchiveEx(ref data);
+                if (hArchive == IntPtr.Zero || data.OpenResult != 0)
+                {
+                    if (data.ArcNameW != IntPtr.Zero) Marshal.FreeHGlobal(data.ArcNameW);
+                    return list;
+                }
+
+                try
+                {
+                    var header = new RARHeaderDataEx();
+                    while (RARReadHeaderEx(hArchive, ref header) == 0)
+                    {
+                        bool isDirectory = (header.FileAttr & 0x10) != 0 || (header.UnpSize == 0 && header.UnpSizeHigh == 0 && header.PackSize == 0 && header.PackSizeHigh == 0);
+
+                        list.Add(new ArchiveEntryInfo
+                        {
+                            FileName = Marshal.PtrToStringUni((IntPtr)header.FileNameW) ?? "",
+                            UnpackedSize = ((ulong)header.UnpSizeHigh << 32) | header.UnpSize,
+                            FileCRC = header.FileCRC,
+                            Method = header.Method,
+                            IsDirectory = isDirectory
+                        });
+                        RARProcessFile(hArchive, RAR_SKIP, null, null);
+                    }
+                }
+                catch { }
+                finally
+                {
+                    RARCloseArchive(hArchive);
+                    if (data.ArcNameW != IntPtr.Zero) Marshal.FreeHGlobal(data.ArcNameW);
+                }
+                    return list;
+                }
+            });
         }
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]

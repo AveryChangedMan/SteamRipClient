@@ -6,9 +6,9 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="SteamRIP Engine v2.0">
+    Title="SteamRIP Engine v1.5.2.3">
 
-    <Grid>
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -23,7 +23,7 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Orientation="Horizontal" Padding="12,0,0,0">
-                <Image Source="ms-appx:///Assets/app_icon.png" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,0,0"/>
+                <Image x:Name="TitleBarIcon" Source="Assets/app_icon.ico" Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,0,0"/>
                 <TextBlock Text="SteamRIP Engine" VerticalAlignment="Center" Margin="12,0,0,0" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="Bold"/>
             </StackPanel>
         </Grid>
@@ -99,7 +99,7 @@
         <Border x:Name="SetupOverlay"
                 Visibility="Collapsed"
                 Grid.RowSpan="2"
-                Background="{ThemeResource SystemControlPageBackgroundMediumAltMediumBrush}">
+                Background="{ThemeResource SystemControlBackgroundBaseLowBrush}">
             <Grid VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="500" Width="500" Padding="40" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="16" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
                 <StackPanel Spacing="24">
                     <TextBlock Text="First Launch Setup" Style="{StaticResource TitleTextBlockStyle}" HorizontalAlignment="Center" FontWeight="Bold"/>

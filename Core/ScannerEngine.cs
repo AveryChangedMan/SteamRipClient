@@ -13,6 +13,15 @@ namespace SteamRipApp.Core
     public class GameFolder : System.ComponentModel.INotifyPropertyChanged
     {
         private string? _localImagePath;
+        public string? LocalImagePath
+        {
+            get => _localImagePath ?? ImageUrl;
+            set {
+                _localImagePath = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ShowProgressOverlay));
+            }
+        }
         private int? _steamAppId;
         private bool _isSteamIntegrated;
         private bool _isEmulatorApplied;
@@ -46,10 +55,13 @@ namespace SteamRipApp.Core
             set {
                 _latestVersion = value;
                 OnPropertyChanged(nameof(LatestVersion));
-                OnPropertyChanged(nameof(LatestVersion));
+                OnPropertyChanged(nameof(HasVersionUpdate));
             }
         }
-        public bool HasVersionUpdate => !string.IsNullOrEmpty(LatestVersion) && !string.IsNullOrEmpty(Version) && !LatestVersion.Equals(Version, StringComparison.OrdinalIgnoreCase);
+        public bool HasVersionUpdate => !string.IsNullOrEmpty(LatestVersion)
+            && !LatestVersion.Equals("Unknown", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(Version)
+            && !LatestVersion.Equals(Version, StringComparison.OrdinalIgnoreCase);
 
         public string DisplayVersion {
             get {
@@ -76,6 +88,14 @@ namespace SteamRipApp.Core
 
         public List<string> Snapshots { get; set; } = new List<string>();
         public string? SelectedSnapshot { get; set; }
+
+        private string? _howToRunNote;
+        public string? HowToRunNote {
+            get => _howToRunNote;
+            set { _howToRunNote = value; NotifyAll(); }
+        }
+        public bool HasNote => !string.IsNullOrEmpty(HowToRunNote);
+        public bool HasReadNote { get; set; }
 
         public bool IsAdvancedRepairVisible => GlobalSettings.IsAdvancedRepairVisible;
 
@@ -145,6 +165,8 @@ namespace SteamRipApp.Core
                 OnPropertyChanged(nameof(IsRunning));
             }
         }
+
+        public bool IsIncompleteExtraction { get; set; }
 
         public bool IsRepairRequired
         {
@@ -241,7 +263,7 @@ namespace SteamRipApp.Core
             }
         }
 
-        public bool ShowProgressOverlay => IsInProgress || IsRepairInterrupted;
+        public bool ShowProgressOverlay => IsInProgress || IsRepairInterrupted || IsIncompleteExtraction || IsMoving || !string.IsNullOrEmpty(ProgressPhase);
 
         private void NotifyAll()
         {
@@ -254,7 +276,8 @@ namespace SteamRipApp.Core
                 nameof(ShowLaunchButton), nameof(ShowMoveButton), nameof(IsRunning),
                 nameof(LaunchButtonText), nameof(DisplayVersion), nameof(IsAdvancedRepairVisible),
                 nameof(IsInProgress), nameof(ProgressPhase), nameof(ProgressPercentage),
-                nameof(ProgressDetails), nameof(EstimatedTime), nameof(ShowProgressOverlay)
+                nameof(ProgressDetails), nameof(EstimatedTime), nameof(ShowProgressOverlay),
+                nameof(HasNote), nameof(HowToRunNote)
             };
 
             if (dispatcher != null && !dispatcher.HasThreadAccess)
@@ -272,7 +295,7 @@ namespace SteamRipApp.Core
             }
         }
 
-        private void OnPropertyChanged(string name)
+        private void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? name = null)
         {
             var dispatcher = App.MainWindowInstance?.DispatcherQueue;
             if (dispatcher != null && !dispatcher.HasThreadAccess)
@@ -285,25 +308,25 @@ namespace SteamRipApp.Core
             }
         }
 
-        public string? LocalImagePath
-        {
-            get => _localImagePath;
-            set {
-                _localImagePath = value;
-                OnPropertyChanged(nameof(ShowProgressOverlay));
-            }
-        }
-
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
 
     public static class ScannerEngine
     {
+        public static event Action? LibraryChanged;
+
+        public static void NotifyLibraryChanged()
+        {
+            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
+                LibraryChanged?.Invoke();
+            });
+        }
         private static readonly HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
 
         private static readonly string[] ExecutableIgnoreList = {
             "remove", "uninstall", "unins", "unin", "crashpad", "crash", "crashpad_handler",
-            "handler", "redist", "_commonredist", "unity", "engine", "dotnet", "framework"
+            "handler", "redist", "_commonredist", "unity", "engine", "dotnet", "framework",
+            "dxsetup", "vcredist", "physx", "socialclub", "launcher", "reporter"
         };
 
         private static readonly Regex MarkerRegex = new Regex(@"STEAMRIP.*Free Pre-installed Steam Games\.url", RegexOptions.IgnoreCase);
@@ -333,186 +356,219 @@ namespace SteamRipApp.Core
             if (!string.IsNullOrEmpty(GlobalSettings.DownloadDirectory) && !scanPaths.Contains(GlobalSettings.DownloadDirectory))
                 scanPaths.Add(GlobalSettings.DownloadDirectory);
 
-            foreach (var scanRoot in scanPaths)
+            var results = await Task.Run(async () =>
             {
-                if (!Directory.Exists(scanRoot)) continue;
-                try {
 
-                    var progressFiles = Directory.GetFiles(scanRoot, "*.progress", SearchOption.TopDirectoryOnly);
-                    foreach (var pFile in progressFiles)
-                    {
-                        string rarPath = pFile.Substring(0, pFile.Length - 9);
-                        if (File.Exists(rarPath))
+                foreach (var scanRoot in scanPaths)
+                {
+                    if (GlobalSettings.IsShuttingDown) break;
+                    if (!Directory.Exists(scanRoot)) continue;
+                    try {
+                        var progressFiles = Directory.GetFiles(scanRoot, "*.progress", SearchOption.TopDirectoryOnly);
+                        foreach (var pFile in progressFiles)
                         {
-                            bool alreadyTracked = GlobalSettings.ActiveDownloads.Any(d => d.DestPath.Equals(rarPath, StringComparison.OrdinalIgnoreCase));
-                            if (!alreadyTracked)
+                            string rarPath = pFile.Substring(0, pFile.Length - 9);
+                            if (File.Exists(rarPath))
                             {
-                                var dl = new ActiveDownloadMetadata
+                                bool alreadyTracked = GlobalSettings.ActiveDownloads.Any(d => d.DestPath.Equals(rarPath, StringComparison.OrdinalIgnoreCase));
+                                if (!alreadyTracked)
                                 {
-                                    Title = Path.GetFileNameWithoutExtension(rarPath),
-                                    DestPath = rarPath,
-                                    Status = "Paused (Discovered in scan)",
-                                    Phase = "PAUSED",
-                                    IsPaused = true
-                                };
-                                GlobalSettings.ActiveDownloads.Add(dl);
-                                GlobalSettings.Save();
-                                Logger.Log($"[Scanner] Discovered orphaned download in {scanRoot}: {rarPath}");
-                            }
-                        }
-                    }
-
-                    var allRars = Directory.GetFiles(scanRoot, "*.rar", SearchOption.TopDirectoryOnly);
-                    foreach (var rarPath in allRars)
-                    {
-                        string rarFileName = Path.GetFileNameWithoutExtension(rarPath);
-
-                        if (rarFileName.EndsWith(".part01", StringComparison.OrdinalIgnoreCase))
-                            rarFileName = rarFileName.Substring(0, rarFileName.Length - 7);
-
-                        string gameTitle = CleanTitle(rarFileName);
-
-                        string? actualGameDir = null;
-                        try {
-                            var subDirs = Directory.GetDirectories(scanRoot);
-                            foreach (var sdPath in subDirs)
-                            {
-                                var sdName = Path.GetFileName(sdPath);
-                                if (sdName.Equals(rarFileName, StringComparison.OrdinalIgnoreCase) ||
-                                    CleanTitle(sdName).Equals(gameTitle, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    actualGameDir = sdPath;
-                                    break;
+                                    var dl = new ActiveDownloadMetadata { Title = Path.GetFileNameWithoutExtension(rarPath), DestPath = rarPath, Status = "Paused (Discovered in scan)", Phase = "PAUSED", IsPaused = true };
+                                    App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
+                                        GlobalSettings.ActiveDownloads.Add(dl);
+                                        GlobalSettings.Save();
+                                    });
+                                    Logger.Log($"[Scanner] Discovered orphaned download in {scanRoot}: {rarPath}");
                                 }
                             }
-                        } catch { }
+                        }
 
-                        if (actualGameDir != null)
+                        var allRars = Directory.GetFiles(scanRoot, "*.rar", SearchOption.TopDirectoryOnly);
+                        foreach (var rarPath in allRars)
                         {
-
-                            bool hasMap = File.Exists(Path.Combine(actualGameDir, ".rip_map.json"));
-                            bool hasVer = File.Exists(Path.Combine(actualGameDir, ".rip_version.json"));
-
-                            if (!hasMap || !hasVer)
-                            {
-
-                                string fullRarPath = Path.GetFullPath(rarPath);
-                                var dl = GlobalSettings.ActiveDownloads.FirstOrDefault(d =>
-                                    !string.IsNullOrEmpty(d.DestPath) &&
-                                    Path.GetFullPath(d.DestPath).Equals(fullRarPath, StringComparison.OrdinalIgnoreCase));
-
-                                if (dl == null)
+                            string rarFileName = Path.GetFileNameWithoutExtension(rarPath);
+                            if (rarFileName.EndsWith(".part01", StringComparison.OrdinalIgnoreCase)) rarFileName = rarFileName.Substring(0, rarFileName.Length - 7);
+                            string gameTitle = CleanTitle(rarFileName);
+                            string? actualGameDir = null;
+                            try {
+                                var subDirs = Directory.GetDirectories(scanRoot);
+                                foreach (var sdPath in subDirs)
                                 {
-                                    dl = new ActiveDownloadMetadata
+                                    var sdName = Path.GetFileName(sdPath);
+                                    if (sdName.Equals(rarFileName, StringComparison.OrdinalIgnoreCase) || CleanTitle(sdName).Equals(gameTitle, StringComparison.OrdinalIgnoreCase)) { actualGameDir = sdPath; break; }
+                                }
+                            } catch { }
+
+                            if (actualGameDir != null)
+                            {
+                                bool hasMap = File.Exists(Path.Combine(actualGameDir, ".rip_map.json"));
+                                bool hasVer = File.Exists(Path.Combine(actualGameDir, ".rip_version.json"));
+                                if (!hasMap || !hasVer)
+                                {
+                                    string fullRarPath = Path.GetFullPath(rarPath);
+                                    var session = DownloadSessionMetadata.Load(fullRarPath);
+                                    var dl = GlobalSettings.ActiveDownloads.FirstOrDefault(d => !string.IsNullOrEmpty(d.DestPath) && Path.GetFullPath(d.DestPath).Equals(fullRarPath, StringComparison.OrdinalIgnoreCase));
+                                    if (dl == null)
                                     {
-                                        Title = gameTitle,
+                                        var newDl = new ActiveDownloadMetadata {
+                                            Title = session?.GameTitle ?? gameTitle,
+                                            DestPath = fullRarPath,
+                                            Status = "📦 Incomplete Extraction",
+                                            Phase = "Extracting",
+                                            IsPaused = true,
+                                            Version = session?.Version ?? "",
+                                            ImageUrl = session?.ImageUrl ?? "",
+                                            SteamRipUrl = session?.SteamRipUrl ?? ""
+                                        };
+                                        App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
+                                            GlobalSettings.ActiveDownloads.Add(newDl);
+                                        });
+                                        Logger.Log($"[Scanner] Discovered incomplete extraction: {newDl.Title}");
+                                    }
+                                    else if (dl.Phase != "Extracting" && dl.Phase != "Done")
+                                    {
+                                        App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
+                                            dl.Status = "📦 Finish Extraction";
+                                            dl.Phase = "Extracting";
+                                            dl.IsPaused = true;
+                                            if (session != null)
+                                            {
+                                                dl.Version = session.Version;
+                                                dl.SteamRipUrl = session.SteamRipUrl;
+                                            }
+                                            dl.NotifyAll();
+                                        });
+                                    }
+                                    GlobalSettings.Save();
+                                }
+                            }
+                            else
+                            {
+                                string fullRarPath = Path.GetFullPath(rarPath);
+                                if (!GlobalSettings.ActiveDownloads.Any(d => !string.IsNullOrEmpty(d.DestPath) && Path.GetFullPath(d.DestPath).Equals(fullRarPath, StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    var session = DownloadSessionMetadata.Load(fullRarPath);
+                                    var dl = new ActiveDownloadMetadata {
+                                        Title = session?.GameTitle ?? gameTitle,
                                         DestPath = fullRarPath,
-                                        Status = "📦 Incomplete Extraction",
+                                        Status = "📦 Ready to Extract",
                                         Phase = "Extracting",
-                                        IsPaused = true
+                                        IsPaused = true,
+                                        Version = session?.Version ?? "",
+                                        ImageUrl = session?.ImageUrl ?? "",
+                                        SteamRipUrl = session?.SteamRipUrl ?? ""
                                     };
-                                    GlobalSettings.ActiveDownloads.Add(dl);
-                                    Logger.Log($"[Scanner] Discovered incomplete extraction: {gameTitle}");
+                                    App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
+                                        GlobalSettings.ActiveDownloads.Add(dl);
+                                        GlobalSettings.Save();
+                                    });
+                                    Logger.Log($"[Scanner] Discovered new archive: {dl.Title}");
                                 }
-                                else if (dl.Phase != "Extracting" && dl.Phase != "Done")
-                                {
-                                    dl.Status = "📦 Finish Extraction";
-                                    dl.Phase = "Extracting";
-                                    dl.IsPaused = true;
-                                    dl.NotifyAll();
-                                }
-                                GlobalSettings.Save();
                             }
                         }
-                        else
-                        {
-
-                            string fullRarPath = Path.GetFullPath(rarPath);
-                            bool alreadyTracked = GlobalSettings.ActiveDownloads.Any(d =>
-                                !string.IsNullOrEmpty(d.DestPath) &&
-                                Path.GetFullPath(d.DestPath).Equals(fullRarPath, StringComparison.OrdinalIgnoreCase));
-
-                            if (!alreadyTracked)
-                            {
-                                var dl = new ActiveDownloadMetadata
-                                {
-                                    Title = gameTitle,
-                                    DestPath = fullRarPath,
-                                    Status = "📦 Ready to Extract",
-                                    Phase = "Extracting",
-                                    IsPaused = true
-                                };
-                                GlobalSettings.ActiveDownloads.Add(dl);
-                                GlobalSettings.Save();
-                                Logger.Log($"[Scanner] Discovered new archive: {gameTitle}");
-                            }
-                        }
-                    }
-                } catch { }
-            }
-
-            var results = new List<GameFolder>();
-            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var scanRoot in directories)
-            {
-                if (!Directory.Exists(scanRoot)) continue;
-
-                progress?.Report($"Scanning {scanRoot}...");
-                Logger.Log($"Starting scan of root: {scanRoot}");
-
-                try {
-                    var subDirs = Directory.GetDirectories(scanRoot);
-                    foreach (var dir in subDirs)
-                    {
-                        try {
-                            var di = new DirectoryInfo(dir);
-                            if ((di.Attributes & FileAttributes.Hidden) != 0 || (di.Attributes & FileAttributes.System) != 0) continue;
-
-                            if (di.Name.EndsWith("-moving", StringComparison.OrdinalIgnoreCase)) continue;
-
-                            var files = di.GetFiles();
-                            bool hasMarker  = files.Any(f => MarkerRegex.IsMatch(f.Name));
-                            bool hasReadme  = files.Any(f => f.Name.Equals("Read_Me_Instructions.txt", StringComparison.OrdinalIgnoreCase));
-                            bool hasRedist  = Directory.Exists(Path.Combine(di.FullName, "_CommonRedist"));
-                            bool inLibrary  = GlobalSettings.Library.Any(m =>
-                                m.LocalPath.Equals(di.FullName, StringComparison.OrdinalIgnoreCase));
-
-                            if (!inLibrary && (!hasMarker || !hasReadme || !hasRedist)) continue;
-
-                            if (seenPaths.Add(di.FullName))
-                            {
-                                var game = await ProcessGameFolder(di);
-                                if (game != null) results.Add(game);
-                            }
-                        } catch (Exception ex) {
-                            Logger.LogError($"Scanner_Folder_{dir}", ex);
-                        }
-                    }
-
-                    var rootDi = new DirectoryInfo(scanRoot);
-                    if (rootDi.Name.EndsWith("-moving", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    bool rootInLibrary = GlobalSettings.Library.Any(m =>
-                        m.LocalPath.Equals(scanRoot, StringComparison.OrdinalIgnoreCase));
-                    if (rootInLibrary && seenPaths.Add(scanRoot))
-                    {
-                        var game = await ProcessGameFolder(rootDi);
-                        if (game != null)
-                        {
-                            CheckForRepairState(game);
-                            results.Add(game);
-                        }
-                    }
-                } catch (Exception ex) {
-                    Logger.LogError($"ScanDirectoriesAsync_{scanRoot}", ex);
+                    } catch { }
                 }
-            }
+
+                var scanResults = new List<GameFolder>();
+                var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var scanRoot in directories)
+                {
+                    if (GlobalSettings.IsShuttingDown) break;
+                    if (!Directory.Exists(scanRoot)) continue;
+
+                    progress?.Report($"Scanning {scanRoot}...");
+                    Logger.Log($"Starting scan of root: {scanRoot}");
+
+                    try {
+                        var subDirs = Directory.GetDirectories(scanRoot);
+                        foreach (var dir in subDirs)
+                        {
+                            if (GlobalSettings.IsShuttingDown) break;
+                            try {
+                                var di = new DirectoryInfo(dir);
+                                if ((di.Attributes & FileAttributes.Hidden) != 0 || (di.Attributes & FileAttributes.System) != 0) continue;
+                                if (di.Name.EndsWith("-moving", StringComparison.OrdinalIgnoreCase)) continue;
+
+                                var files = di.GetFiles();
+                                bool hasMarker   = files.Any(f => MarkerRegex.IsMatch(f.Name));
+                                bool hasReadme   = files.Any(f => f.Name.Equals("Read_Me_Instructions.txt", StringComparison.OrdinalIgnoreCase));
+                                bool hasRedist   = Directory.Exists(Path.Combine(di.FullName, "_CommonRedist"));
+                                bool hasRipFile  = files.Any(f => f.Name.Equals(".rip_version.json", StringComparison.OrdinalIgnoreCase)
+                                                                || f.Name.Equals(".rip_skeleton.json", StringComparison.OrdinalIgnoreCase)
+                                                                || f.Name.Equals(".rip_map.json", StringComparison.OrdinalIgnoreCase));
+                                bool inLibrary   = GlobalSettings.Library.Any(m => m.LocalPath.Equals(di.FullName, StringComparison.OrdinalIgnoreCase));
+
+                                bool isSteamRipGame = hasMarker || hasReadme || hasRedist || hasRipFile;
+                                if (!inLibrary && !isSteamRipGame) continue;
+
+                                if (seenPaths.Add(di.FullName))
+                                {
+                                    var game = await ProcessGameFolder(di);
+                                    if (game != null) { CheckForRepairState(game); scanResults.Add(game); }
+                                }
+                            } catch (Exception ex) {
+                                Logger.LogError($"Scanner_Folder_{dir}", ex);
+                            }
+                        }
+
+                        var sessionFiles = Directory.GetFiles(scanRoot, "*.rar.session.json", SearchOption.TopDirectoryOnly);
+                        foreach (var sessionFile in sessionFiles)
+                        {
+                            try {
+                                string rarPath = sessionFile.Substring(0, sessionFile.Length - 13);
+                                if (!File.Exists(rarPath)) continue;
+
+                                var session = DownloadSessionMetadata.Load(rarPath);
+                                if (session == null) continue;
+
+                                string expectedDir = Path.Combine(scanRoot, session.SafeFolderName);
+                                if (seenPaths.Contains(expectedDir)) continue;
+
+                                bool isActive = GlobalSettings.ActiveDownloads.Any(d =>
+                                    (d.DestPath.Equals(rarPath, StringComparison.OrdinalIgnoreCase) || d.Title.Equals(session.GameTitle, StringComparison.OrdinalIgnoreCase)) &&
+                                    d.Phase != "Failed" && d.Phase != "Done");
+                                if (isActive) continue;
+
+                                var virtualGame = new GameFolder {
+                                    Title = session.GameTitle,
+                                    RootPath = rarPath,
+                                    Version = session.Version,
+                                    Url = session.SteamRipUrl,
+                                    ImageUrl = session.ImageUrl,
+                                    IsIncompleteExtraction = true,
+                                    ProgressPhase = "INCOMPLETE",
+                                    ProgressPercentage = 0,
+                                    ProgressDetails = "Interrupted extraction found. Click to resume."
+                                };
+                                scanResults.Add(virtualGame);
+                                Logger.Log($"[Scanner] Found resumable session for: {session.GameTitle}");
+                            } catch { }
+                        }
+
+                        var rootDi = new DirectoryInfo(scanRoot);
+                        if (!rootDi.Name.EndsWith("-moving", StringComparison.OrdinalIgnoreCase))
+                        {
+                            bool rootInLibrary = GlobalSettings.Library.Any(m => m.LocalPath.Equals(scanRoot, StringComparison.OrdinalIgnoreCase));
+                            if (rootInLibrary && seenPaths.Add(scanRoot))
+                            {
+                                var game = await ProcessGameFolder(rootDi);
+                                if (game != null) { CheckForRepairState(game); scanResults.Add(game); }
+                            }
+                        }
+                    } catch (Exception ex) {
+                        Logger.LogError($"ScanDirectoriesAsync_{scanRoot}", ex);
+                    }
+                }
+                foreach (var game in scanResults)
+                {
+                    game.LoadSnapshots();
+                }
+                return scanResults;
+            });
 
             FoundGames = results;
-
             _ = UpdateRepairLogicVersions(results);
-
             return results;
         }
 
@@ -591,243 +647,207 @@ namespace SteamRipApp.Core
 
         private static async Task<GameFolder?> ProcessGameFolder(DirectoryInfo mainDir)
         {
-
-            if (mainDir.Name.Equals("_CommonRedist", StringComparison.OrdinalIgnoreCase) ||
-                mainDir.Name.Equals("Redist", StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            var game = new GameFolder
+            return await Task.Run(async () =>
             {
-                RootPath = mainDir.FullName
-            };
+                if (mainDir.Name.Equals("_CommonRedist", StringComparison.OrdinalIgnoreCase) ||
+                    mainDir.Name.Equals("Redist", StringComparison.OrdinalIgnoreCase))
+                    return null;
 
-            var files = mainDir.GetFiles();
-            bool hasMarker = files.Any(f => MarkerRegex.IsMatch(f.Name));
-            bool hasReadme = files.Any(f => f.Name.Equals("Read_Me_Instructions.txt", StringComparison.OrdinalIgnoreCase));
-            bool hasRedist = Directory.Exists(Path.Combine(mainDir.FullName, "_CommonRedist"));
-            bool hasRipFile = files.Any(f => f.Name.EndsWith(".rip_map.json", StringComparison.OrdinalIgnoreCase) ||
-                                            f.Name.EndsWith(".rip_skeleton.json", StringComparison.OrdinalIgnoreCase));
-            bool hasVersionFile = files.Any(f => f.Name.Equals(".rip_version.json", StringComparison.OrdinalIgnoreCase));
-            bool inLibraryMetadata = GlobalSettings.Library.Any(m => m.LocalPath.Equals(mainDir.FullName, StringComparison.OrdinalIgnoreCase));
+                var game = new GameFolder { RootPath = mainDir.FullName };
 
-            bool hasExe = mainDir.GetFiles("*.exe", SearchOption.AllDirectories).Any(f => {
-                string lower = f.Name.ToLower();
-                return !ExecutableIgnoreList.Any(ignore => lower.Contains(ignore));
-            });
+                var files = mainDir.GetFiles();
+                bool hasMarker = files.Any(f => MarkerRegex.IsMatch(f.Name));
+                bool hasReadme = files.Any(f => f.Name.Equals("Read_Me_Instructions.txt", StringComparison.OrdinalIgnoreCase));
+                bool hasRedist = Directory.Exists(Path.Combine(mainDir.FullName, "_CommonRedist"));
+                bool hasRipFile = files.Any(f => f.Name.EndsWith(".rip_map.json", StringComparison.OrdinalIgnoreCase) ||
+                                                f.Name.EndsWith(".rip_skeleton.json", StringComparison.OrdinalIgnoreCase));
+                bool hasVersionFile = files.Any(f => f.Name.Equals(".rip_version.json", StringComparison.OrdinalIgnoreCase));
+                bool inLibraryMetadata = GlobalSettings.Library.Any(m => m.LocalPath.Equals(mainDir.FullName, StringComparison.OrdinalIgnoreCase));
 
-            if (!inLibraryMetadata && !hasMarker && !hasReadme && !hasRedist && !hasExe && !hasRipFile && !hasVersionFile) return null;
+                bool hasExe = mainDir.GetFiles("*.exe", SearchOption.AllDirectories).Any(f => {
+                    string lower = f.Name.ToLower();
+                    return !ExecutableIgnoreList.Any(ignore => lower.Contains(ignore));
+                });
 
-            if (hasRedist)
-            {
-                RedistService.UpdateRedistManifest(Path.Combine(mainDir.FullName, "_CommonRedist"));
-            }
+                if (!inLibraryMetadata && !hasMarker && !hasReadme && !hasRedist && !hasExe && !hasRipFile && !hasVersionFile) return null;
 
-            game.MissingRedists = RedistService.GetRequiredRedists(mainDir.FullName);
-            game.IsRedistMissing = game.HasMissingRedists;
+                if (hasRedist) { RedistService.UpdateRedistManifest(Path.Combine(mainDir.FullName, "_CommonRedist")); }
 
-            var cleanPath = mainDir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var metadata = GlobalSettings.Library.FirstOrDefault(m =>
-                m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                .Equals(cleanPath, StringComparison.OrdinalIgnoreCase));
+                game.MissingRedists = RedistService.GetRequiredRedists(mainDir.FullName);
+                game.IsRedistMissing = game.HasMissingRedists;
 
-            if (metadata != null)
-            {
-                if (!string.IsNullOrEmpty(metadata.Title)) game.Title = CleanTitle(metadata.Title);
+                var cleanPath = mainDir.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var metadata = GlobalSettings.Library.FirstOrDefault(m =>
+                    m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    .Equals(cleanPath, StringComparison.OrdinalIgnoreCase));
 
-                if (metadata.ManualSteamAppId.HasValue)
+                if (metadata != null)
                 {
-                    game.SteamAppId = metadata.ManualSteamAppId;
+                    if (!string.IsNullOrEmpty(metadata.Title)) game.Title = CleanTitle(metadata.Title);
+                    if (metadata.ManualSteamAppId.HasValue) game.SteamAppId = metadata.ManualSteamAppId;
+                    else game.SteamAppId = metadata.SteamAppId;
+
+                    game.IsSteamIntegrated = metadata.IsSteamIntegrated;
+                    if (!game.IsSteamIntegrated && game.SteamAppId.HasValue)
+                    {
+                        string? steamPath = SteamManager.GetSteamPath();
+                        if (!string.IsNullOrEmpty(steamPath))
+                        {
+                            string acfPath = Path.Combine(steamPath, "steamapps", $"appmanifest_{game.SteamAppId}.acf");
+                            if (File.Exists(acfPath)) { game.IsSteamIntegrated = true; metadata.IsSteamIntegrated = true; GlobalSettings.Save(); }
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(metadata.Url)) game.Url = metadata.Url;
+                    if (!string.IsNullOrEmpty(metadata.ImageUrl)) game.ImageUrl = metadata.ImageUrl;
+                    if (!string.IsNullOrEmpty(metadata.LocalImagePath)) game.LocalImagePath = metadata.LocalImagePath;
+
+                    string legacyReceipt = Path.Combine(mainDir.FullName, "GBinitTimeStamp.txt");
+                    string newReceipt = Path.Combine(mainDir.FullName, "PatchLog.txt");
+                    if (File.Exists(legacyReceipt) || File.Exists(newReceipt)) { game.IsEmulatorApplied = true; if (metadata != null) metadata.IsEmulatorApplied = true; }
+                    else if (metadata != null) game.IsEmulatorApplied = metadata.IsEmulatorApplied;
                 }
+                else game.Title = CleanTitle(mainDir.Name);
+
+                var imgFiles = mainDir.GetFiles().Where(f => f.Name.Equals("folder.jpg", StringComparison.OrdinalIgnoreCase) ||
+                                                           f.Name.Equals("folder.png", StringComparison.OrdinalIgnoreCase) ||
+                                                           f.Name.Equals("icon.png", StringComparison.OrdinalIgnoreCase)).ToList();
+                if (imgFiles.Any()) { game.LocalImagePath = imgFiles.First().FullName; }
+
+                game.SizeBytes = GetDirectorySize(mainDir);
+
+                var subDirs = mainDir.GetDirectories().Where(d =>
+                    !d.Name.Equals("_CommonRedist", StringComparison.OrdinalIgnoreCase) &&
+                    !d.Name.Equals("Redist", StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (subDirs.Count == 1) game.GameSubFolderPath = subDirs[0].FullName;
+                else if (subDirs.Count > 1)
+                {
+                    FileInfo? bestExe = null; DirectoryInfo? bestDir = null;
+                    foreach (var sd in subDirs)
+                    {
+                        var exes = sd.GetFiles("*.exe", SearchOption.AllDirectories)
+                                     .Where(f => {
+                                         string lower = f.Name.ToLower();
+                                         return !ExecutableIgnoreList.Any(ignore => lower.Contains(ignore));
+                                     }).OrderByDescending(f => f.Length);
+                        var top = exes.FirstOrDefault();
+                        if (top != null && (bestExe == null || top.Length > bestExe.Length)) { bestExe = top; bestDir = sd; }
+                    }
+                    if (bestDir != null) game.GameSubFolderPath = bestDir.FullName;
+                }
+
+                if (GlobalSettings.GameConfigs.TryGetValue(mainDir.FullName, out var config) && !string.IsNullOrEmpty(config.ManualExePath))
+                    game.ExecutablePath = config.ManualExePath;
                 else
                 {
-                    game.SteamAppId = metadata.SteamAppId;
+
+                    string searchPath = game.GameSubFolderPath ?? mainDir.FullName;
+                    game.ExecutablePath = FindExecutable(searchPath, game.Title);
                 }
 
-                game.IsSteamIntegrated = metadata.IsSteamIntegrated;
-
-                if (!game.IsSteamIntegrated && game.SteamAppId.HasValue)
+                if (!game.SteamAppId.HasValue)
                 {
-                    string? steamPath = SteamManager.GetSteamPath();
-                    if (!string.IsNullOrEmpty(steamPath))
-                    {
-                        string acfPath = Path.Combine(steamPath, "steamapps", $"appmanifest_{game.SteamAppId}.acf");
-                        if (File.Exists(acfPath))
-                        {
-                            game.IsSteamIntegrated = true;
-                            metadata.IsSteamIntegrated = true;
-                            GlobalSettings.Save();
-                            Logger.Log($"[Scanner] Corrected integration state for '{game.Title}' (Found manifest)");
-                        }
-                    }
+                    game.SteamAppId = ResolveAppIdFromFiles(mainDir.FullName);
+                    if (game.SteamAppId.HasValue && metadata != null) metadata.SteamAppId = game.SteamAppId;
                 }
 
-                string legacyReceipt = Path.Combine(mainDir.FullName, "GBinitTimeStamp.txt");
-                string newReceipt = Path.Combine(mainDir.FullName, "PatchLog.txt");
+                string localVer = RepairService.ReadVersionFile(mainDir.FullName);
+                if (!string.IsNullOrEmpty(localVer)) game.Version = localVer;
 
-                if (File.Exists(legacyReceipt) || File.Exists(newReceipt))
+                if (metadata != null)
                 {
-                    game.IsEmulatorApplied = true;
-                    if (metadata != null) metadata.IsEmulatorApplied = true;
+                    if (!string.IsNullOrEmpty(metadata.Url)) game.Url = metadata.Url;
+                    if (!string.IsNullOrEmpty(metadata.ImageUrl)) game.ImageUrl = metadata.ImageUrl;
+                    if (!string.IsNullOrEmpty(metadata.Version)) { game.Version = metadata.Version; if (metadata.Version != localVer) RepairService.WriteVersionFile(mainDir.FullName, metadata.Version); }
+
+                    if (!string.IsNullOrEmpty(metadata.HowToRunNote)) game.HowToRunNote = metadata.HowToRunNote;
+
+                    if (!string.IsNullOrEmpty(metadata.LatestVersion)) game.LatestVersion = metadata.LatestVersion;
                 }
-                else if (metadata != null)
+
+                if (string.IsNullOrEmpty(game.LocalImagePath) || !game.SteamAppId.HasValue)
                 {
-                    game.IsEmulatorApplied = metadata.IsEmulatorApplied;
-                }
-            }
-            else
-            {
-                game.Title = CleanTitle(mainDir.Name);
-            }
-
-            var imgFiles = mainDir.GetFiles().Where(f => f.Name.Equals("folder.jpg", StringComparison.OrdinalIgnoreCase) ||
-                                                       f.Name.Equals("folder.png", StringComparison.OrdinalIgnoreCase) ||
-                                                       f.Name.Equals("icon.png", StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (imgFiles.Any()) {
-                game.LocalImagePath = imgFiles.First().FullName;
-                Logger.Log($"[Scanner] Found local image for {game.Title}: {game.LocalImagePath}");
-            }
-
-            game.SizeBytes = await Task.Run(() => GetDirectorySize(mainDir));
-
-            var subDirs = mainDir.GetDirectories().Where(d =>
-                !d.Name.Equals("_CommonRedist", StringComparison.OrdinalIgnoreCase) &&
-                !d.Name.Equals("Redist", StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (subDirs.Count == 1)
-            {
-                game.GameSubFolderPath = subDirs[0].FullName;
-            }
-            else if (subDirs.Count > 1)
-            {
-
-                FileInfo? bestExe = null;
-                DirectoryInfo? bestDir = null;
-                foreach (var sd in subDirs)
-                {
-                    var exes = sd.GetFiles("*.exe", SearchOption.AllDirectories)
-                                 .Where(f => {
-                                     string lower = f.Name.ToLower();
-                                     return !ExecutableIgnoreList.Any(ignore => lower.Contains(ignore));
-                                 })
-                                 .OrderByDescending(f => f.Length);
-                    var top = exes.FirstOrDefault();
-                    if (top != null && (bestExe == null || top.Length > bestExe.Length))
-                    {
-                        bestExe = top;
-                        bestDir = sd;
-                    }
-                }
-                if (bestDir != null) game.GameSubFolderPath = bestDir.FullName;
-            }
-
-            if (GlobalSettings.GameConfigs.TryGetValue(mainDir.FullName, out var config) && !string.IsNullOrEmpty(config.ManualExePath))
-            {
-                game.ExecutablePath = config.ManualExePath;
-                Logger.Log($"[Scanner] Using manual executable path for '{game.Title}': {game.ExecutablePath}");
-            }
-            else
-            {
-                game.ExecutablePath = FindExecutable(mainDir.FullName, game.GameSubFolderPath);
-
-                if (string.IsNullOrEmpty(game.ExecutablePath))
-                {
-                    game.ExecutablePath = FindExecutable(mainDir.FullName);
-                }
-            }
-
-            if (!game.SteamAppId.HasValue)
-            {
-                game.SteamAppId = ResolveAppIdFromFiles(mainDir.FullName);
-                if (game.SteamAppId.HasValue)
-                {
-                    Logger.Log($"[Scanner] Resolved AppID {game.SteamAppId} from files for {game.Title}");
-                    if (metadata != null) metadata.SteamAppId = game.SteamAppId;
-                }
-            }
-
-            string localVer = RepairService.ReadVersionFile(mainDir.FullName);
-            if (!string.IsNullOrEmpty(localVer)) game.Version = localVer;
-
-            if (metadata != null)
-            {
-                if (!string.IsNullOrEmpty(metadata.Url)) game.Url = metadata.Url;
-                if (!string.IsNullOrEmpty(metadata.ImageUrl)) game.ImageUrl = metadata.ImageUrl;
-
-                if (!string.IsNullOrEmpty(metadata.Version))
-                {
-                    game.Version = metadata.Version;
-
-                    if (metadata.Version != localVer)
-                    {
-                        RepairService.WriteVersionFile(mainDir.FullName, metadata.Version);
-                        Logger.Log($"[Scanner] Synced local version file for '{game.Title}' to match settings.json: {metadata.Version}");
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(game.LocalImagePath) || !game.SteamAppId.HasValue)
-            {
-                _ = Task.Run(async () => {
-                    try {
-
-                        if (!game.SteamAppId.HasValue)
-                        {
-                            var resolvedId = await SteamManager.LookupAppIdAsync(game.Title);
-                            if (resolvedId.HasValue)
-                            {
-                                game.SteamAppId = resolvedId;
-                                if (metadata != null) metadata.SteamAppId = resolvedId;
-                                GlobalSettings.Save();
+                    _ = Task.Run(async () => {
+                        try {
+                            if (!game.SteamAppId.HasValue) { var resolvedId = await SteamManager.LookupAppIdAsync(game.Title); if (resolvedId.HasValue) { game.SteamAppId = resolvedId; if (metadata != null) metadata.SteamAppId = resolvedId; GlobalSettings.Save(); } }
+                            if (string.IsNullOrEmpty(game.LocalImagePath)) {
+                                string? imgUrl = null; if (!string.IsNullOrEmpty(game.ImageUrl)) imgUrl = game.ImageUrl;
+                                else if (game.SteamAppId.HasValue) imgUrl = $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{game.SteamAppId}/header.jpg";
+                                if (!string.IsNullOrEmpty(imgUrl)) { await DownloadGameImageAsync(imgUrl, game.RootPath); game.LocalImagePath = Path.Combine(game.RootPath, "folder.jpg"); }
                             }
-                        }
+                        } catch { }
+                    });
+                }
 
-                        if (string.IsNullOrEmpty(game.LocalImagePath))
-                        {
-                            string? imgUrl = null;
-                            if (!string.IsNullOrEmpty(game.ImageUrl)) imgUrl = game.ImageUrl;
-                            else if (game.SteamAppId.HasValue) imgUrl = $"https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/{game.SteamAppId}/header.jpg";
+                if (string.IsNullOrEmpty(game.Url) && GlobalSettings.GamePageLinks.TryGetValue(mainDir.FullName, out var storedUrl))
+                    game.Url = storedUrl;
 
-                            if (!string.IsNullOrEmpty(imgUrl))
+                if (!string.IsNullOrEmpty(game.Url))
+                {
+                    var targetGame = game;
+                    var targetMeta = metadata;
+                    _ = Task.Run(async () =>
+                    {
+                        try {
+                            Logger.Log($"[VersionCheck] Checking {targetGame.Title} at {targetGame.Url}");
+                            var details = await SteamRipScraper.GetGameDetailsAsync(targetGame.Url);
+                            if (!string.IsNullOrEmpty(details.LatestVersion)
+                                && !details.LatestVersion.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
                             {
-                                await DownloadGameImageAsync(imgUrl, game.RootPath);
-                                game.LocalImagePath = Path.Combine(game.RootPath, "folder.jpg");
+                                Logger.Log($"[VersionCheck] {targetGame.Title}: Remote={details.LatestVersion}, Local={targetGame.Version}");
+
+                                if (targetMeta != null && targetMeta.LatestVersion != details.LatestVersion)
+                                {
+                                    targetMeta.LatestVersion = details.LatestVersion;
+                                    GlobalSettings.Save();
+                                }
+
+                                if (details.LatestVersion != targetGame.Version)
+                                {
+
+                                    App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
+                                    {
+                                        targetGame.LatestVersion = details.LatestVersion;
+                                    });
+                                    Logger.Log($"[VersionCheck] Update flagged for {targetGame.Title}!");
+                                }
+                                else if (targetGame.LatestVersion != "")
+                                {
+
+                                    App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
+                                    {
+                                        targetGame.LatestVersion = "";
+                                    });
+                                    if (targetMeta != null) targetMeta.LatestVersion = "";
+                                    GlobalSettings.Save();
+                                }
+
+                                if (string.IsNullOrEmpty(targetGame.HowToRunNote) && !string.IsNullOrEmpty(details.HowToRunNote))
+                                {
+                                    App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
+                                    {
+                                        targetGame.HowToRunNote = details.HowToRunNote;
+                                    });
+                                    if (targetMeta != null)
+                                    {
+                                        targetMeta.HowToRunNote = details.HowToRunNote;
+                                        GlobalSettings.Save();
+                                    }
+                                }
                             }
-                        }
-                    } catch { }
-                });
-            }
-
-            if (string.IsNullOrEmpty(game.Url) && GlobalSettings.GamePageLinks.TryGetValue(mainDir.FullName, out var storedUrl))
-                game.Url = storedUrl;
-
-            if (!string.IsNullOrEmpty(game.Url))
-            {
-                _ = Task.Run(async () => {
-                    try {
-                        Logger.Log($"[VersionCheck] Checking {game.Title} at {game.Url}");
-                        var details = await SteamRipScraper.GetGameDetailsAsync(game.Url);
-                        if (!string.IsNullOrEmpty(details.LatestVersion))
-                        {
-                            Logger.Log($"[VersionCheck] {game.Title}: Remote={details.LatestVersion}, Local={game.Version}");
-                            if (details.LatestVersion != game.Version)
+                            else
                             {
-                                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => {
-                                    game.LatestVersion = details.LatestVersion;
-                                });
-                                Logger.Log($"[VersionCheck] Update flagged for {game.Title}!");
+                                Logger.Log($"[VersionCheck] {targetGame.Title}: Could not find version on page.");
                             }
+                        } catch (Exception ex) {
+                            Logger.Log($"[VersionCheck] {targetGame.Title}: Failed - {ex.Message}");
                         }
-                        else {
-                            Logger.Log($"[VersionCheck] {game.Title}: Could not find version on page.");
-                        }
-                    } catch (Exception ex) {
-                        Logger.Log($"[VersionCheck] {game.Title}: Failed - {ex.Message}\n{ex.StackTrace}");
-                    }
-                });
-            }
+                    });
+                }
 
-            return game;
+                return game;
+            });
         }
 
         public static void UpdateAppIdInFiles(string rootPath, int appId)
@@ -977,7 +997,10 @@ namespace SteamRipApp.Core
                                        .Where(f => {
                                            string nameLower = Path.GetFileName(f).ToLower();
                                            string fullLower = f.ToLower();
-                                           return !ExecutableIgnoreList.Any(ignore => nameLower.Contains(ignore) || fullLower.Contains("\\" + ignore + "\\"));
+                                            return !ExecutableIgnoreList.Any(ignore =>
+                                               nameLower.Contains(ignore) ||
+                                               fullLower.Contains(Path.DirectorySeparatorChar + ignore) ||
+                                               fullLower.Contains(Path.AltDirectorySeparatorChar + ignore));
                                        })
                                        .ToList();
 
@@ -1052,5 +1075,6 @@ namespace SteamRipApp.Core
 
             return score;
         }
+
     }
 }

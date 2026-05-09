@@ -57,6 +57,7 @@ namespace SteamRipApp.Core
         public bool PreInstalled { get; set; }
         public Dictionary<string, string> SystemRequirements { get; set; } = new Dictionary<string, string>();
         public Dictionary<string, string> GameInfo { get; set; } = new Dictionary<string, string>();
+        public string? HowToRunNote { get; set; }
     }
 
     public class DownloadHost
@@ -139,6 +140,13 @@ namespace SteamRipApp.Core
                             details.SystemRequirements[key] = val;
                         }
                     }
+                }
+
+                var noteNode = doc.DocumentNode.SelectSingleNode("//blockquote[contains(@class, 'quote-light')] | //blockquote[contains(@class, 'aligncenter')] | //blockquote[contains(@class, 'wp-block-quote')] | //blockquote[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'how to run')] | //div[contains(@class, 'wp-block-quote')]");
+                if (noteNode != null)
+                {
+
+                    details.HowToRunNote = System.Net.WebUtility.HtmlDecode(noteNode.InnerHtml).Trim();
                 }
             } catch (Exception ex) {
                 Logger.LogError("GetGameDetails", ex);

@@ -153,30 +153,45 @@ namespace SteamRipApp.Core
                 if (response?.items != null && response.items.Count > 0)
                 {
 
-                    string cleanTitle = Regex.Replace(gameTitle, @"[^a-zA-Z0-9\s]", "").ToLower();
-                    string[] titleWords = cleanTitle.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    static string Normalize(string s) =>
+                        Regex.Replace(s, @"[^a-zA-Z0-9]", "").ToLowerInvariant();
 
-                    var bestMatch = response.items[0];
-                    int maxMatches = 0;
+                    static int Levenshtein(string a, string b)
+                    {
+                        int[,] d = new int[a.Length + 1, b.Length + 1];
+                        for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+                        for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+                        for (int i = 1; i <= a.Length; i++)
+                            for (int j = 1; j <= b.Length; j++)
+                                d[i, j] = a[i-1] == b[j-1]
+                                    ? d[i-1, j-1]
+                                    : 1 + Math.Min(d[i-1, j-1], Math.Min(d[i-1, j], d[i, j-1]));
+                        return d[a.Length, b.Length];
+                    }
+
+                    string normQuery = Normalize(gameTitle);
+
+                    SteamAppIdResult? bestMatch = null;
+                    bool bestIsExact = false;
+                    int bestDist = int.MaxValue;
 
                     foreach (var item in response.items)
                     {
-                        string cleanItemName = Regex.Replace(item.name, @"[^a-zA-Z0-9\s]", "").ToLower();
-                        int matchCount = titleWords.Count(w => cleanItemName.Contains(w));
+                        string normItem = Normalize(item.name);
+                        bool isExact = normItem.Equals(normQuery, StringComparison.Ordinal);
+                        int dist = Levenshtein(normQuery, normItem);
 
-                        if (matchCount > maxMatches)
+                        if (bestMatch == null
+                            || (isExact && !bestIsExact)
+                            || (isExact == bestIsExact && dist < bestDist))
                         {
-                            maxMatches = matchCount;
                             bestMatch = item;
-                        }
-                        else if (matchCount == maxMatches && Math.Abs(item.name.Length - gameTitle.Length) < Math.Abs(bestMatch.name.Length - gameTitle.Length))
-                        {
-
-                            bestMatch = item;
+                            bestIsExact = isExact;
+                            bestDist = dist;
                         }
                     }
 
-                    Logger.Log($"Matched: {bestMatch.name} (ID: {bestMatch.id}) with {maxMatches} word matches");
+                    Logger.Log($"Matched: {bestMatch!.name} (ID: {bestMatch.id}) exact={bestIsExact} dist={bestDist}");
                     return bestMatch.id;
                 }
             } catch { }

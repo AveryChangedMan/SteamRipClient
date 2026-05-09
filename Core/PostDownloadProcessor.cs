@@ -116,52 +116,28 @@ namespace SteamRipApp.Core
             if (shouldMap)
             {
                 onStatus?.Invoke("🗺️ Generating archive map...");
-                await RepairService.GenerateArchiveMapAsync(archivePath, gameExtractionDir);
+                await RepairService.GenerateArchiveMapAsync(archivePath, gameExtractionDir, version);
             }
 
-            if (GlobalSettings.AutoDeleteArchive)
-            {
-                try {
-
-                    var extractedFiles = Directory.GetFiles(gameExtractionDir, "*", SearchOption.AllDirectories);
-                    if (extractedFiles.Length == 0)
-                    {
-                        Logger.Log($"[PostDownload] ❌ SAFETY BLOCK: Extraction folder '{gameExtractionDir}' is EMPTY. Aborting archive deletion to prevent data loss.");
-                        onStatus?.Invoke("⚠️ Extraction seems to have failed. Archives preserved.");
-                    }
-                    else
-                    {
-                        onStatus?.Invoke("🧹 Cleaning up archives...");
-                        if (File.Exists(archivePath)) File.Delete(archivePath);
-
-                        var otherRars = Directory.GetFiles(gameExtractionDir, "*.rar", SearchOption.AllDirectories);
-                        foreach (var rar in otherRars)
-                        {
-                            try { File.Delete(rar); } catch { }
-                        }
-                        Logger.Log($"[PostDownload] Cleaned up archives ({extractedFiles.Length} files extracted successfully).");
-                    }
-                } catch (Exception ex) {
-                    Logger.Log($"[PostDownload] Failed to cleanup archive: {ex.Message}");
+            await Task.Run(() => {
+                var redistPath = Path.Combine(gameExtractionDir, "_CommonRedist");
+                if (Directory.Exists(redistPath))
+                {
+                    RedistService.UpdateRedistManifest(redistPath);
                 }
-            }
 
-            var redistPath = Path.Combine(gameExtractionDir, "_CommonRedist");
-            if (Directory.Exists(redistPath))
-            {
-                RedistService.UpdateRedistManifest(redistPath);
-            }
-
-            var secondaryRedistPath = Path.Combine(extractedGameDir, "_CommonRedist");
-            if (Directory.Exists(secondaryRedistPath) && secondaryRedistPath != redistPath)
-            {
-                RedistService.UpdateRedistManifest(secondaryRedistPath);
-            }
+                var secondaryRedistPath = Path.Combine(extractedGameDir, "_CommonRedist");
+                if (Directory.Exists(secondaryRedistPath) && secondaryRedistPath != redistPath)
+                {
+                    RedistService.UpdateRedistManifest(secondaryRedistPath);
+                }
+            });
 
             Logger.Log($"[PostDownload] Extracted game content dir: {extractedGameDir}");
             onStatus?.Invoke("📚 Finalizing library registration...");
 
-            await RepairService.RunInitialHashAsync(gameExtractionDir, extractedGameDir);
+            Logger.Log($"[Repair] Running Initial Hash for: {gameExtractionDir}");
+            await RepairService.RunInitialHashAsync(gameExtractionDir, gameExtractionDir, version);
 
             onStatus?.Invoke("🖼 Copying cover image...");
             string? localImagePath = null;
@@ -178,12 +154,12 @@ namespace SteamRipApp.Core
             }
 
             onStatus?.Invoke("🔍 Scanning game folder...");
-            var scanDirs = new List<string> { gameExtractionDir };
+
+            var scanDirs = new List<string> { extractToDir };
             var scanResults = await ScannerEngine.ScanDirectoriesAsync(scanDirs, progress: null);
 
             var gameFolder = scanResults
-                .FirstOrDefault(g => g.RootPath.Equals(gameExtractionDir, StringComparison.OrdinalIgnoreCase))
-                ?? scanResults.FirstOrDefault();
+                .FirstOrDefault(g => g.RootPath.Equals(gameExtractionDir, StringComparison.OrdinalIgnoreCase));
 
             if (gameFolder == null)
             {
@@ -255,7 +231,9 @@ namespace SteamRipApp.Core
                 Hash        = gameHash,
                 DownloadDate = DateTime.Now,
                 SizeBytes   = folderSize,
-                LocalImagePath = localImagePath ?? ""
+                LocalImagePath = localImagePath ?? "",
+                SteamAppId = gameFolder.SteamAppId,
+                IsSteamIntegrated = gameFolder.IsSteamIntegrated
             });
 
             if (!string.IsNullOrEmpty(steamRipPageUrl))
@@ -264,14 +242,55 @@ namespace SteamRipApp.Core
                 GlobalSettings.GamePageLinks[normPath] = steamRipPageUrl;
             }
 
-            if (!GlobalSettings.ScanDirectories.Contains(extractToDir, StringComparer.OrdinalIgnoreCase))
-                GlobalSettings.ScanDirectories.Add(extractToDir);
+            string? howToRunNote = null;
+            if (!string.IsNullOrEmpty(steamRipPageUrl))
+            {
+                try {
+                    var details = await SteamRipScraper.GetGameDetailsAsync(steamRipPageUrl);
+                    if (details != null && !string.IsNullOrEmpty(details.HowToRunNote))
+                    {
+                        howToRunNote = details.HowToRunNote;
+                        Logger.Log($"[PostDownload] HowToRunNote fetched and will be persisted.");
+                    }
+                } catch { }
+            }
+
+            var addedMeta = GlobalSettings.Library.FirstOrDefault(m =>
+                m.LocalPath.Equals(gameExtractionDir, StringComparison.OrdinalIgnoreCase));
+            if (addedMeta != null && !string.IsNullOrEmpty(howToRunNote))
+            {
+                addedMeta.HowToRunNote = howToRunNote;
+                if (gameFolder != null) gameFolder.HowToRunNote = howToRunNote;
+            }
 
             GlobalSettings.Save();
+
+            ScannerEngine.NotifyLibraryChanged();
+            _ = Task.Run(async () => {
+                await Task.Delay(1500);
+                if (!GlobalSettings.IsShuttingDown)
+                    ScannerEngine.NotifyLibraryChanged();
+            });
 
             Logger.Log($"[PostDownload] ✅ '{gameTitle}' added to library at: {gameExtractionDir}");
 
             onStatus?.Invoke($"✅ '{gameTitle}' added to library!");
+
+            if (GlobalSettings.AutoDeleteArchive)
+            {
+                try {
+                    if (File.Exists(archivePath)) {
+                        onStatus?.Invoke("🧹 Cleaning up archives...");
+                        File.Delete(archivePath);
+
+                        var otherRars = Directory.GetFiles(gameExtractionDir, "*.rar", SearchOption.AllDirectories);
+                        foreach (var rar in otherRars) try { File.Delete(rar); } catch { }
+                        Logger.Log("[PostDownload] Archive cleanup completed successfully.");
+                    }
+                } catch (Exception ex) {
+                    Logger.Log($"[PostDownload] Final archive cleanup failed: {ex.Message}");
+                }
+            }
 
             return gameFolder;
         }

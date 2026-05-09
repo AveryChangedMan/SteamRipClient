@@ -12,12 +12,19 @@ namespace SteamRipApp
             this.InitializeComponent();
             this.UnhandledException += App_UnhandledException;
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+            System.AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+        }
+
+        private void CurrentDomain_UnhandledException(object sender, System.UnhandledExceptionEventArgs e)
+        {
+            Logger.LogError("DOMAIN_SILENCE", e.ExceptionObject as System.Exception);
+
         }
 
         private void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
         {
-            Logger.LogError("GLOBAL_CRASH", e.Exception);
-            e.Handled = false;
+            Logger.LogError("GLOBAL_SILENCE", e.Exception);
+            e.Handled = true;
         }
 
         private void TaskScheduler_UnobservedTaskException(object? sender, System.Threading.Tasks.UnobservedTaskExceptionEventArgs e)
@@ -26,8 +33,25 @@ namespace SteamRipApp
             e.SetObserved();
         }
 
+        internal static System.Threading.Mutex? _appMutex;
         protected override async void OnLaunched(LaunchActivatedEventArgs args)
         {
+            bool createdNew = false;
+            try
+            {
+                _appMutex = new System.Threading.Mutex(true, "SteamRipApp-SingleInstance-Mutex", out createdNew);
+            }
+            catch (System.Threading.AbandonedMutexException)
+            {
+
+                createdNew = true;
+            }
+            if (!createdNew)
+            {
+                System.Environment.Exit(0);
+                return;
+            }
+
             try
             {
                 var cmdLine = System.Environment.GetCommandLineArgs();

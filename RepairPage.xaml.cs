@@ -17,19 +17,21 @@ namespace SteamRipApp
         public RepairPage()
         {
             this.InitializeComponent();
+            this.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
             this.Loaded += async (s, e) => await LoadGames();
         }
 
         private async Task LoadGames()
         {
+            LoadingRing.IsActive = true;
             Games.Clear();
             var results = await ScannerEngine.GetTrackedGamesAsync();
             foreach (var g in results)
             {
-                g.LoadSnapshots();
                 Games.Add(g);
             }
             RepairGameGrid.ItemsSource = Games;
+            LoadingRing.IsActive = false;
         }
 
         private async void RepairGame_Click(object sender, RoutedEventArgs e)
@@ -39,8 +41,8 @@ namespace SteamRipApp
             var gf = Games.FirstOrDefault(g => g.RootPath == path);
             if (gf == null) return;
 
-            string snapshotName = gf.SelectedSnapshot ?? "Official Rip Map";
-            Logger.Log($"[RepairTab] Repair Game requested for '{gf.Title}' (Snapshot: {snapshotName})");
+            string snapshotName = "Official Rip Map";
+            Logger.Log($"[RepairTab] Repair Game requested for '{gf.Title}'");
 
             btn.IsEnabled = false;
             btn.Content = "Analyzing...";
@@ -48,14 +50,14 @@ namespace SteamRipApp
             RepairReport report;
             try
             {
-                report = await RepairService.AnalyzeGameAsync(path, path, snapshotName, (status, pct) =>
+                report = await Task.Run(() => RepairService.AnalyzeGameAsync(path, path, snapshotName, (status, pct) =>
                 {
                     DispatcherQueue.TryEnqueue(() =>
                     {
                         GlobalSettings.HashingProgress = status;
                         GlobalSettings.HashingProgressValue = pct;
                     });
-                });
+                }));
             }
             finally
             {
@@ -124,7 +126,7 @@ namespace SteamRipApp
 
             try
             {
-                await RepairService.PerformIntegrityRepairAsync(path, path, report, url,
+                await Task.Run(async () => await RepairService.PerformIntegrityRepairAsync(path, path, report, url,
                     (status, pct) =>
                     {
                         DispatcherQueue.TryEnqueue(() =>
@@ -132,7 +134,7 @@ namespace SteamRipApp
                             GlobalSettings.HashingProgress = status;
                             GlobalSettings.HashingProgressValue = pct;
                         });
-                    }, _repairCts.Token);
+                    }, _repairCts.Token));
 
                 await App.ShowDialogSafeAsync(new ContentDialog
                 {
@@ -167,50 +169,5 @@ namespace SteamRipApp
             }
         }
 
-        private async void CreateSnapshot_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button btn || btn.Tag is not string path) return;
-
-            var gf = Games.FirstOrDefault(g => g.RootPath == path);
-            if (gf == null) return;
-
-            var input = new TextBox { PlaceholderText = "Snapshot Name (e.g. Modded_v1.0)" };
-            var dialog = new ContentDialog
-            {
-                Title = "Create Integrity Snapshot",
-                Content = new StackPanel
-                {
-                    Spacing = 8,
-                    Children =
-                    {
-                        new TextBlock { Text = "This will create a new reference of all current files in the game directory.", TextWrapping = TextWrapping.Wrap },
-                        input
-                    }
-                },
-                PrimaryButtonText = "Create",
-                CloseButtonText = "Cancel",
-                XamlRoot = this.XamlRoot
-            };
-
-            if (await App.ShowDialogSafeAsync(dialog) == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(input.Text))
-            {
-                string name = input.Text.Trim();
-                Logger.Log($"[RepairTab] Creating snapshot '{name}' for {gf.Title}...");
-                await RepairService.CreateCustomSnapshotAsync(path, name);
-                gf.LoadSnapshots();
-                gf.SelectedSnapshot = name;
-            }
-        }
-
-        private void ResetHashes_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is not Button btn || btn.Tag is not string path) return;
-
-            RepairService.StopHashingForGame(path);
-            Logger.Log($"[RepairTab] Integrity data reset for {path}");
-
-            var flyout = new Flyout { Content = new TextBlock { Text = "Integrity data deleted. Next repair will be a full scan." } };
-            flyout.ShowAt(btn);
-        }
     }
 }

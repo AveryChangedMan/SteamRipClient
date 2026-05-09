@@ -1,4 +1,4 @@
-# SteamRipApp v1.4.9.4 Changelog
+# SteamRipApp v1.5.2.5 Changelog
 
 - Fixed application crashes during shutdown by explicitly cancelling background tasks and timers.
 - Improved extraction reliability by aligning with 64-bit UnRAR SDK and adding automatic CLI fallbacks.
@@ -7,7 +7,7 @@
 - Implemented delta updates using the Leap remote RAR scanning system to save bandwidth.
 - Added right-click context menus for launching, configuration, and Steam shortcut integration.
 - Included a guided setup walkthrough for antivirus exclusions and performance optimization.
-- Synchronized all internal metadata and manifests to version 1.4.9.4.
+- Synchronized all internal metadata and manifests to version 1.5.2.5.
 - Stabilized integrity repairs with robust path resolution and C# hashing fallbacks for OneDrive/cloud files.
 - Resolved UI thread freezes during background tasks by implementing throttled dispatcher-based notifications.
 - Improved threading model for GameFolder metadata updates to prevent UI contention.

@@ -1,12 +1,16 @@
 using System;
 using System.IO;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
+using System.Threading;
 
 namespace SteamRipApp.Core
 {
     public static class Logger
     {
         private static readonly string LogPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamRipApp", "SteamRipApp.log");
-        private static readonly object LockObj = new object();
+        private static readonly BlockingCollection<string> _logQueue = new BlockingCollection<string>();
+        private static readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         static Logger()
         {
@@ -17,26 +21,50 @@ namespace SteamRipApp.Core
                     Directory.CreateDirectory(dir);
                 }
 
+                Task.Factory.StartNew(ProcessQueue, _cts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
                 Log("=================================================");
                 Log($"[SESSION] Started at {DateTime.Now}");
                 Log("=================================================");
             } catch { }
         }
 
-        public static void Log(string message)
+        private static void ProcessQueue()
         {
-            lock (LockObj)
+            foreach (var line in _logQueue.GetConsumingEnumerable(_cts.Token))
             {
-                try {
-                    string logLine = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}";
-                    File.AppendAllText(LogPath, logLine);
-                } catch { }
+                try
+                {
+                    File.AppendAllText(LogPath, line);
+                }
+                catch { }
             }
         }
 
-        public static void LogError(string context, Exception ex)
+        public static void Log(string message)
         {
+            try {
+                string logLine = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}";
+                _logQueue.Add(logLine);
+
+                System.Diagnostics.Debug.WriteLine(logLine);
+            } catch { }
+        }
+
+        public static void LogError(string context, Exception? ex)
+        {
+            if (ex == null)
+            {
+                Log($"[ERROR] {context}: Unknown exception (null)");
+                return;
+            }
             Log($"[ERROR] {context}: {ex.Message}{Environment.NewLine}{ex.StackTrace}");
+        }
+
+        public static void Shutdown()
+        {
+            _cts.Cancel();
+            _logQueue.CompleteAdding();
         }
     }
 }
