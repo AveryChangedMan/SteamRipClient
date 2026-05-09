@@ -39,7 +39,7 @@
                 <NavigationViewItem Content="Downloads" Icon="Download" Tag="downloads"/>
                 <NavigationViewItem Content="Library" Icon="Library" Tag="library"/>
 
-                <NavigationViewItem Content="CleanUp" Icon="Delete" Tag="cleanup"/>
+                <NavigationViewItem Content="Redist Cleanup" Icon="Delete" Tag="cleanup"/>
                 <NavigationViewItem Content="Help" Icon="Help" Tag="help"/>
             </NavigationView.MenuItems>
 

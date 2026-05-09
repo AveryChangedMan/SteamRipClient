@@ -1510,7 +1510,21 @@ namespace SteamRipApp.Core
                     }
 
                     var currentFiles = Directory.GetFiles(scanRoot, "*", SearchOption.AllDirectories)
-                                            .Where(f => !Path.GetFileName(f).StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) && !f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase));
+                                            .Where(f => {
+                                                string name = Path.GetFileName(f);
+
+                                                if (name.Equals(".mods.json", StringComparison.OrdinalIgnoreCase)) return false;
+                                                if (name.Equals("folder.jpg", StringComparison.OrdinalIgnoreCase)) return false;
+                                                if (name.EndsWith("rip_skeleton.dat", StringComparison.OrdinalIgnoreCase)) return false;
+                                                if (name.Equals("GBinitTimeStamp.txt", StringComparison.OrdinalIgnoreCase)) return false;
+                                                if (name.Equals("PatchLog.txt", StringComparison.OrdinalIgnoreCase)) return false;
+
+                                                if (name.StartsWith(".rip_", StringComparison.OrdinalIgnoreCase) || name.Contains(".rip_")) return false;
+
+                                                if (f.Contains("_CommonRedist", StringComparison.OrdinalIgnoreCase)) return false;
+
+                                                return true;
+                                            });
 
                     foreach (var fullPath in currentFiles)
                     {

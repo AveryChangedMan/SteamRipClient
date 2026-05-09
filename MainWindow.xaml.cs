@@ -788,7 +788,7 @@ namespace SteamRipApp
                         break;
                     case "cleanup":
                         ContentFrame.Navigate(typeof(CleanupView));
-                        NavView.Header = "Cleanup & Storage";
+                        NavView.Header = "Redist Cleanup";
                         break;
                     case "help":
                         ContentFrame.Navigate(typeof(HelpPage));
