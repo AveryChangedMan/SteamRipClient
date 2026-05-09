@@ -13,8 +13,29 @@ using System.Threading.Tasks;
 
 namespace SteamRipApp
 {
+    public class GlobalTask : System.ComponentModel.INotifyPropertyChanged
+    {
+        private string _title;
+        private string _status;
+        private string _subStatus;
+        private double _progress;
+        private bool _isIndeterminate = true;
+
+        public string Title { get => _title; set { _title = value; OnPropertyChanged(); } }
+        public string Status { get => _status; set { _status = value; OnPropertyChanged(); } }
+        public string SubStatus { get => _subStatus; set { _subStatus = value; OnPropertyChanged(); } }
+        public double Progress { get => _progress; set { _progress = value; OnPropertyChanged(); } }
+        public bool IsIndeterminate { get => _isIndeterminate; set { _isIndeterminate = value; OnPropertyChanged(); } }
+
+        public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string name = null) =>
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+    }
+
     public sealed partial class MainWindow : Window
     {
+        public System.Collections.ObjectModel.ObservableCollection<GlobalTask> ActiveOverlayTasks { get; } = new();
+        private GlobalTask? _lastLegacyTask;
 
         [DllImport("kernel32.dll", SetLastError = false)]
         private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
@@ -339,29 +360,49 @@ namespace SteamRipApp
 
                     if (!GlobalSettings.ActiveDownloads.Any(d => d.DestPath.Equals(destPath, StringComparison.OrdinalIgnoreCase)))
                     {
-
                         try {
+
                             var json = File.ReadAllText(mPath);
                             var manifest = System.Text.Json.JsonSerializer.Deserialize<DownloadManifest>(json);
-                            if (manifest != null && manifest.Chunks != null && manifest.TotalBytes >= 0)
+                            double pct = 0;
+                            if (manifest != null && manifest.Chunks != null && manifest.TotalBytes > 0)
                             {
-                                string title = Path.GetFileNameWithoutExtension(destPath).Replace("_", " ");
                                 double totalDownloaded = manifest.Chunks.Sum(c => (double)c.Downloaded);
-                                double pct = manifest.TotalBytes > 0 ? (totalDownloaded * 100.0) / manifest.TotalBytes : 0;
+                                pct = Math.Clamp((totalDownloaded * 100.0) / manifest.TotalBytes, 0, 100);
                                 if (double.IsNaN(pct) || double.IsInfinity(pct)) pct = 0;
-
-                                var metadata = new ActiveDownloadMetadata {
-                                    Title = title,
-                                    SourceUrl = manifest.DownloadUrl ?? "",
-                                    PageUrl = manifest.BuzzheavierPageUrl ?? "",
-                                    DestPath = destPath,
-                                    Status = "⏹ Orphaned (Ready to Resume)",
-                                    Percentage = Math.Clamp(pct, 0, 100),
-                                    Source = (manifest.DownloadUrl?.Contains("gofile") == true) ? "Gofile" : "Buzzheavier"
-                                };
-                                GlobalSettings.ActiveDownloads.Add(metadata);
-                                Logger.Log($"[Recovery] Restored orphaned download: {title} ({pct:F1}%)");
                             }
+
+                            if (pct == 0 && File.Exists(destPath) && manifest?.TotalBytes > 0)
+                            {
+                                var fileInfo = new FileInfo(destPath);
+                                if (fileInfo.Length > 0)
+                                {
+                                    pct = Math.Clamp((fileInfo.Length * 100.0) / manifest.TotalBytes, 0, 99);
+                                    Logger.Log($"[Recovery] Progress file stale (0%) — estimated from disk size: {pct:F1}% ({fileInfo.Length:N0} / {manifest.TotalBytes:N0} bytes)");
+                                }
+                            }
+
+                            var session = DownloadSessionMetadata.Load(destPath);
+
+                            string title = session?.GameTitle
+                                ?? Path.GetFileNameWithoutExtension(destPath).Replace("_", " ");
+
+                            var metadata = new ActiveDownloadMetadata {
+                                Title = title,
+                                SourceUrl = manifest?.DownloadUrl ?? "",
+                                PageUrl = manifest?.BuzzheavierPageUrl ?? "",
+                                SteamRipUrl = session?.SteamRipUrl ?? "",
+                                ImageUrl = session?.ImageUrl ?? "",
+                                Version = session?.Version ?? "",
+                                DestPath = destPath,
+                                Status = $"⏸ Paused — {pct:F0}% downloaded",
+                                Phase = "PAUSED",
+                                IsPaused = true,
+                                Percentage = pct,
+                                Source = (manifest?.DownloadUrl?.Contains("gofile") == true) ? "Gofile" : "Buzzheavier"
+                            };
+                            GlobalSettings.ActiveDownloads.Add(metadata);
+                            Logger.Log($"[Recovery] Restored paused download: {title} ({pct:F1}%)");
                         } catch { }
                     }
                 }
@@ -567,37 +608,59 @@ namespace SteamRipApp
             GlobalProgressBar.Value = pct;
         }
 
-        public void ShowGlobalOverlay(string title, string status)
+        public GlobalTask ShowGlobalOverlay(string title, string status)
         {
+            var task = new GlobalTask { Title = title, Status = status };
+            ActiveOverlayTasks.Add(task);
+            _lastLegacyTask = task;
+
             NavView.IsHitTestVisible = false;
-            GlobalOverlayTitle.Text = title;
-            GlobalOverlayStatus.Text = status;
-            GlobalOverlaySubStatus.Text = "";
-            GlobalOverlayProgressBar.Value = 0;
-            GlobalOverlayProgressBar.IsIndeterminate = true;
             GlobalProgressOverlay.Visibility = Visibility.Visible;
+            return task;
         }
 
         public void UpdateGlobalOverlay(string status, double? progress = null, string? subStatus = null)
         {
-            GlobalOverlayStatus.Text = status;
+            if (_lastLegacyTask != null) UpdateGlobalOverlay(_lastLegacyTask, status, progress, subStatus);
+        }
+
+        public void UpdateGlobalOverlay(GlobalTask task, string status, double? progress = null, string? subStatus = null)
+        {
+            task.Status = status;
             if (progress.HasValue)
             {
-                GlobalOverlayProgressBar.IsIndeterminate = false;
-                GlobalOverlayProgressBar.Value = progress.Value;
+                task.IsIndeterminate = false;
+                task.Progress = progress.Value;
             }
-            if (subStatus != null) GlobalOverlaySubStatus.Text = subStatus;
+            if (subStatus != null) task.SubStatus = subStatus;
         }
 
         public void HideGlobalOverlay()
         {
-            NavView.IsHitTestVisible = true;
-            GlobalProgressOverlay.Visibility = Visibility.Collapsed;
+            if (_lastLegacyTask != null) HideGlobalOverlay(_lastLegacyTask);
+        }
+
+        public void HideGlobalOverlay(GlobalTask task)
+        {
+            ActiveOverlayTasks.Remove(task);
+            if (ActiveOverlayTasks.Count == 0)
+            {
+                NavView.IsHitTestVisible = true;
+                GlobalProgressOverlay.Visibility = Visibility.Collapsed;
+                _lastLegacyTask = null;
+            }
         }
 
         private void GlobalOverlayHide_Click(object sender, RoutedEventArgs e)
         {
-            HideGlobalOverlay();
+            if (sender is Button btn && btn.DataContext is GlobalTask task)
+            {
+                HideGlobalOverlay(task);
+            }
+            else
+            {
+                HideGlobalOverlay();
+            }
         }
 
         private async void RepairChanges_Click(object sender, RoutedEventArgs e)

@@ -85,11 +85,12 @@ namespace SteamRipApp
             var item = btn.DataContext as SearchResult;
             if (item == null || item.IsDownloading) return;
 
+            GlobalTask? task = null;
             try {
                 item.IsDownloading = true;
 
                 var mainWindow = (Application.Current as App)?.m_window as MainWindow;
-                mainWindow?.ShowGlobalOverlay($"Quick Download: {item.Title}", "Scanning for available sources...");
+                task = mainWindow?.ShowGlobalOverlay($"Quick Download: {item.Title}", "Scanning for available sources...");
 
                 await Task.Delay(500);
 
@@ -109,7 +110,7 @@ namespace SteamRipApp
                 if (!bzFound && !gfFound)
                 {
                     item.IsDownloading = false;
-                    mainWindow?.HideGlobalOverlay();
+                    if (task != null) mainWindow?.HideGlobalOverlay(task);
                     var dialog = new ContentDialog {
                         Title = "Sources Not Found",
                         Content = "Sorry this game doesn't have our sources, try a manual installation. You can still add it to our launcher after its completed",
@@ -122,7 +123,7 @@ namespace SteamRipApp
 
                 if (bzFound && gfFound)
                 {
-                    mainWindow?.UpdateGlobalOverlay("Select your preferred source...");
+                    if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Select your preferred source...");
                     var selectDialog = new ContentDialog {
                         Title = "Select Download Source",
                         Content = "Both Gofile and SteamRip (Buzzheavier) are available. Which would you prefer?",
@@ -134,37 +135,37 @@ namespace SteamRipApp
 
                     var result = await App.ShowDialogSafeAsync(selectDialog);
                     if (result == ContentDialogResult.Primary) {
-                        await StartBuzzheavierDownload(item);
+                        await StartBuzzheavierDownload(item, task);
                     }
                     else if (result == ContentDialogResult.Secondary) {
-                        await StartGoFileDownload(item);
+                        await StartGoFileDownload(item, task);
                     }
                     else {
                         item.IsDownloading = false;
-                        mainWindow?.HideGlobalOverlay();
+                        if (task != null) mainWindow?.HideGlobalOverlay(task);
                         return;
                     }
                 }
                 else if (gfFound)
                 {
-                    mainWindow?.UpdateGlobalOverlay("Using Gofile...");
-                    await StartGoFileDownload(item);
+                    if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Using Gofile...");
+                    await StartGoFileDownload(item, task);
                 }
                 else if (bzFound)
                 {
-                    mainWindow?.UpdateGlobalOverlay("Using Buzzheavier...");
-                    await StartBuzzheavierDownload(item);
+                    if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Using Buzzheavier...");
+                    await StartBuzzheavierDownload(item, task);
                 }
 
-                mainWindow?.UpdateGlobalOverlay("Success!", 100);
+                if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Success!", 100);
                 await Task.Delay(1500);
-                mainWindow?.HideGlobalOverlay();
+                if (task != null) mainWindow?.HideGlobalOverlay(task);
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload", ex);
                 var mainWindow = (Application.Current as App)?.m_window as MainWindow;
-                mainWindow?.UpdateGlobalOverlay("Error occurred. Please try again.");
+                if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Error occurred. Please try again.");
                 await Task.Delay(2000);
-                mainWindow?.HideGlobalOverlay();
+                if (task != null) mainWindow?.HideGlobalOverlay(task);
             } finally {
                 item.IsDownloading = false;
             }
@@ -205,7 +206,7 @@ namespace SteamRipApp
             return path;
         }
 
-        private async Task StartBuzzheavierDownload(SearchResult item)
+        private async Task StartBuzzheavierDownload(SearchResult item, GlobalTask? task = null)
         {
             if (string.IsNullOrEmpty(item.BuzzheavierUrl)) return;
             var bzzhrUrl = item.BuzzheavierUrl;
@@ -220,7 +221,7 @@ namespace SteamRipApp
                 if (string.IsNullOrEmpty(directUrl))
                 {
                     var mainWindow = (Application.Current as App)?.m_window as MainWindow;
-                    mainWindow?.UpdateGlobalOverlay("API failed, falling back to browser interceptor...");
+                    if (task != null) mainWindow?.UpdateGlobalOverlay(task, "API failed, falling back to browser interceptor...");
                     Logger.Log("[QuickDownload-Buzz] API resolution failed. Falling back to Interceptor...");
                     directUrl = await InterceptDownloadUrlAsync(bzzhrUrl);
                 }
@@ -239,13 +240,13 @@ namespace SteamRipApp
                         version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
                 } catch { }
 
-                await StartDownloadWithMetadata(item, destPath, directUrl, bzzhrUrl, "Buzzheavier", version: version);
+                await StartDownloadWithMetadata(item, destPath, directUrl, bzzhrUrl, "Buzzheavier", version: version, task: task);
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload-Buzz", ex);
             }
         }
 
-        private async Task StartGoFileDownload(SearchResult item)
+        private async Task StartGoFileDownload(SearchResult item, GlobalTask? task = null)
         {
             try {
                 Logger.Log($"[QuickDownload-GoFile] Starting for: {item.Title}");
@@ -291,13 +292,13 @@ namespace SteamRipApp
                         version = (await SteamRipScraper.GetGameDetailsAsync(item.Url)).LatestVersion;
                 } catch { }
 
-                await StartDownloadWithMetadata(item, destPath, directUrl, item.GoFileUrl ?? "", "Gofile", isGoFile: true, version: version);
+                await StartDownloadWithMetadata(item, destPath, directUrl, item.GoFileUrl ?? "", "Gofile", isGoFile: true, version: version, task: task);
             } catch (Exception ex) {
                 Logger.LogError("QuickDownload-GoFile", ex);
             }
         }
 
-        private async Task StartDownloadWithMetadata(SearchResult item, string destPath, string directUrl, string pageUrl, string sourceName, bool isGoFile = false, string version = "")
+        private async Task StartDownloadWithMetadata(SearchResult item, string destPath, string directUrl, string pageUrl, string sourceName, bool isGoFile = false, string version = "", GlobalTask? task = null)
         {
 
             try {
@@ -396,7 +397,8 @@ namespace SteamRipApp
                     metadata.Status = statusText;
 
                     var mw = (Application.Current as App)?.m_window as MainWindow;
-                    mw?.UpdateGlobalOverlay("Downloading Game...", stats.Percentage, statusText);
+                    if (task != null) mw?.UpdateGlobalOverlay(task, "Downloading Game...", stats.Percentage, statusText);
+                    else mw?.UpdateGlobalOverlay("Downloading Game...", stats.Percentage, statusText);
                 });
             };
             downloader.DownloadCompleted += async (s, e) =>
@@ -407,7 +409,8 @@ namespace SteamRipApp
                     metadata.Phase = "Extracting";
                     metadata.Status = "📦 Download complete — starting extraction...";
                     metadata.Percentage = 0;
-                    mainWindow?.UpdateGlobalOverlay("Extracting Game...", 0, "Decompressing and verifying files...");
+                    if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Extracting Game...", 0, "Decompressing and verifying files...");
+                    else mainWindow?.UpdateGlobalOverlay("Extracting Game...", 0, "Decompressing and verifying files...");
                 });
 
                 var archivePath = destPath;
@@ -425,7 +428,8 @@ namespace SteamRipApp
                     onStatus: msg => {
                         this.DispatcherQueue.TryEnqueue(() => {
                             metadata.Status = msg;
-                            mainWindow?.UpdateGlobalOverlay("Extracting Game...", null, msg);
+                            if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Extracting Game...", null, msg);
+                            else mainWindow?.UpdateGlobalOverlay("Extracting Game...", null, msg);
                             if (msg.Contains("CRITICAL SPACE LIMIT"))
                             {
                                 if (DateTime.Now - GlobalSettings.LastSpaceWarningTime > TimeSpan.FromHours(2))
@@ -437,7 +441,8 @@ namespace SteamRipApp
                     },
                     onProgress: pct => this.DispatcherQueue.TryEnqueue(() => {
                         metadata.Percentage = Math.Round(pct, 1);
-                        mainWindow?.UpdateGlobalOverlay("Extracting Game...", pct);
+                        if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Extracting Game...", pct);
+                        else mainWindow?.UpdateGlobalOverlay("Extracting Game...", pct);
                     }),
                     confirmSpace: async (free, req) => {
                         var tcs = new TaskCompletionSource<bool>();
@@ -485,13 +490,15 @@ namespace SteamRipApp
                         metadata.Phase = "Done";
                         metadata.Status = "✅ Extraction completed";
                         metadata.Percentage = 100;
-                        mw?.UpdateGlobalOverlay("Installation Successful!", 100, "Game is ready to play.");
+                        if (task != null) mw?.UpdateGlobalOverlay(task, "Installation Successful!", 100, "Game is ready to play.");
+                        else mw?.UpdateGlobalOverlay("Installation Successful!", 100, "Game is ready to play.");
                     }
                     else
                     {
                         metadata.Phase = "Failed";
                         metadata.Status = "❌ Extraction failed — verify extractor in Settings.";
-                        mw?.UpdateGlobalOverlay("Installation Failed", 0, "Check logs for details.");
+                        if (task != null) mw?.UpdateGlobalOverlay(task, "Installation Failed", 0, "Check logs for details.");
+                        else mw?.UpdateGlobalOverlay("Installation Failed", 0, "Check logs for details.");
                     }
 
                     GlobalSettings.Save();
@@ -499,7 +506,10 @@ namespace SteamRipApp
 
                     _ = Task.Run(async () => {
                         await Task.Delay(3000);
-                        this.DispatcherQueue.TryEnqueue(() => mw?.HideGlobalOverlay());
+                        this.DispatcherQueue.TryEnqueue(() => {
+                            if (task != null) mw?.HideGlobalOverlay(task);
+                            else mw?.HideGlobalOverlay();
+                        });
                     });
                 });
             };

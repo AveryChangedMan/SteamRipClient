@@ -10,7 +10,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);SteamRipInjector\**</DefaultItemExcludes>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <WindowsPackageType Condition="'$(GenerateAppxPackageOnBuild)' != 'true'">None</WindowsPackageType>
+    <WindowsPackageType>None</WindowsPackageType>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>false</PublishSingleFile>
@@ -21,8 +21,7 @@
     <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <AppxPackage Condition="'$(GenerateAppxPackageOnBuild)' == 'true'">true</AppxPackage>
-    <AppxPackage Condition="'$(GenerateAppxPackageOnBuild)' != 'true'">false</AppxPackage>
+    <AppxPackage>false</AppxPackage>
     <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
     <PackageCertificateThumbprint>8829DFD5386F422824A49A2CFCB78E1943E56A37</PackageCertificateThumbprint>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>

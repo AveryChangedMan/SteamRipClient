@@ -386,6 +386,9 @@ namespace SteamRipApp.Core
                         var allRars = Directory.GetFiles(scanRoot, "*.rar", SearchOption.TopDirectoryOnly);
                         foreach (var rarPath in allRars)
                         {
+
+                            if (File.Exists(rarPath + ".progress")) continue;
+
                             string rarFileName = Path.GetFileNameWithoutExtension(rarPath);
                             if (rarFileName.EndsWith(".part01", StringComparison.OrdinalIgnoreCase)) rarFileName = rarFileName.Substring(0, rarFileName.Length - 7);
                             string gameTitle = CleanTitle(rarFileName);

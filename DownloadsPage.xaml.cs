@@ -117,7 +117,33 @@ namespace SteamRipApp
         private async void ResumeOrphanedDownload(ActiveDownloadMetadata dl)
         {
             try {
-                if (dl.Phase == "Extracting" || string.IsNullOrEmpty(dl.SourceUrl))
+                string progressFilePath = dl.DestPath + ".progress";
+                bool hasProgressFile = File.Exists(progressFilePath);
+
+                if (hasProgressFile)
+                {
+                    if (string.IsNullOrEmpty(dl.SourceUrl))
+                    {
+                        try {
+                            var json = File.ReadAllText(progressFilePath);
+                            var manifest = System.Text.Json.JsonSerializer.Deserialize<DownloadManifest>(json);
+                            if (manifest != null)
+                            {
+                                dl.SourceUrl = manifest.DownloadUrl ?? "";
+                                dl.PageUrl = manifest.BuzzheavierPageUrl ?? dl.PageUrl;
+                            }
+                        } catch { }
+                    }
+
+                    if (string.IsNullOrEmpty(dl.SourceUrl))
+                    {
+                        dl.Status = "❌ Cannot resume — source URL unknown. Delete and re-download.";
+                        dl.NotifyAll();
+                        return;
+                    }
+
+                }
+                else if (dl.Phase == "Extracting" || string.IsNullOrEmpty(dl.SourceUrl))
                 {
                     _ = RunExtractionOnlyAsync(dl);
                     return;
@@ -151,12 +177,58 @@ namespace SteamRipApp
                     DownloadDir = GlobalSettings.DownloadDirectory
                 }.SaveAsync();
 
+                bool isGoFile = dl.Source == "Gofile"
+                    || (dl.SourceUrl?.Contains("gofile.io") == true)
+                    || (dl.PageUrl?.Contains("gofile.io") == true);
+
+                if (isGoFile && hasProgressFile)
+                {
+                    string gofilePageUrl = dl.PageUrl;
+
+                    if (string.IsNullOrEmpty(gofilePageUrl) || !gofilePageUrl.Contains("gofile.io"))
+                    {
+                        try {
+                            var json = File.ReadAllText(progressFilePath);
+                            var manifest = System.Text.Json.JsonSerializer.Deserialize<DownloadManifest>(json);
+                            gofilePageUrl = manifest?.BuzzheavierPageUrl ?? "";
+                        } catch { }
+                    }
+
+                    if (string.IsNullOrEmpty(gofilePageUrl))
+                    {
+                        dl.Status = "❌ GoFile resume failed — page URL not found. Delete and re-download.";
+                        dl.NotifyAll();
+                        return;
+                    }
+
+                    dl.Status = "🔄 Re-resolving GoFile link...";
+                    dl.NotifyAll();
+
+                    try {
+                        var freshLinks = await GoFileClient.GetDirectLinksAsync(gofilePageUrl);
+                        if (freshLinks == null || freshLinks.Count == 0)
+                        {
+                            dl.Status = "❌ GoFile link expired and could not be refreshed. Delete and re-download.";
+                            dl.NotifyAll();
+                            return;
+                        }
+                        dl.SourceUrl = freshLinks[0];
+                        dl.Source = "Gofile";
+                        Logger.Log($"[GoFile Resume] Fresh URL resolved: {dl.SourceUrl}");
+                    } catch (Exception ex) {
+                        Logger.LogError("GoFileResume", ex);
+                        dl.Status = "❌ GoFile re-resolution failed. Delete and re-download.";
+                        dl.NotifyAll();
+                        return;
+                    }
+                }
+
                 var downloader = new CustomDownloader(dl.SourceUrl, dl.DestPath);
                 downloader.BuzzheavierPageUrl = dl.PageUrl;
                 downloader.SteamRipPageUrl = dl.SteamRipUrl;
                 downloader.ImageUrl = dl.ImageUrl;
-                downloader.ThreadCount = dl.Source == "Gofile" ? CustomDownloader.MaxThreads : 12;
-                if (dl.Source == "Gofile") downloader.GoFileToken = GoFileClient.AccountToken;
+                downloader.ThreadCount = isGoFile ? CustomDownloader.MaxThreads : 12;
+                if (isGoFile) downloader.GoFileToken = GoFileClient.AccountToken;
 
                 downloader.ProgressChanged += (s, stats) => {
                     this.DispatcherQueue.TryEnqueue(() => {

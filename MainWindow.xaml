@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="SteamRIP Engine v1.5.2.3">
+    Title="SteamRIP Engine v1.5.2.5">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
@@ -198,27 +198,40 @@
                 Grid.RowSpan="2"
                 Background="#AA000000"
                 Canvas.ZIndex="999">
-            <Grid VerticalAlignment="Center" HorizontalAlignment="Center" Width="420" Padding="32" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="16" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
-                <StackPanel Spacing="20">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="GlobalOverlayTitle" Text="Operation in Progress" Style="{StaticResource TitleTextBlockStyle}" FontWeight="Bold"/>
-                        <ProgressRing Grid.Column="1" IsActive="True" Width="24" Height="24" Margin="12,0,0,0"/>
-                    </Grid>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" VerticalAlignment="Center">
+                <ItemsControl x:Name="TasksList" ItemsSource="{x:Bind ActiveOverlayTasks, Mode=OneWay}" Margin="0,40">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:GlobalTask">
+                            <Grid Width="420" Padding="28" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" CornerRadius="16" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
+                                <StackPanel Spacing="16">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource TitleTextBlockStyle}" FontWeight="Bold" FontSize="18"/>
+                                        <ProgressRing Grid.Column="1" IsActive="True" Width="20" Height="20" Margin="12,0,0,0"/>
+                                    </Grid>
 
-                    <ProgressBar x:Name="GlobalOverlayProgressBar" Minimum="0" Maximum="100" Height="12" CornerRadius="6"/>
+                                    <ProgressBar Value="{x:Bind Progress, Mode=OneWay}" IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}" Minimum="0" Maximum="100" Height="8" CornerRadius="4"/>
 
-                    <StackPanel Spacing="4">
-                        <TextBlock x:Name="GlobalOverlayStatus" Text="Initializing..." HorizontalAlignment="Center" Opacity="0.8" TextWrapping="Wrap" TextAlignment="Center"/>
-                        <TextBlock x:Name="GlobalOverlaySubStatus" Text="" HorizontalAlignment="Center" FontSize="11" Opacity="0.5" TextWrapping="Wrap" TextAlignment="Center"/>
-                    </StackPanel>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{x:Bind Status, Mode=OneWay}" HorizontalAlignment="Center" Opacity="0.9" TextWrapping="Wrap" TextAlignment="Center" FontSize="13"/>
+                                        <TextBlock Text="{x:Bind SubStatus, Mode=OneWay}" HorizontalAlignment="Center" FontSize="11" Opacity="0.5" TextWrapping="Wrap" TextAlignment="Center"/>
+                                    </StackPanel>
 
-                    <Button Content="Run in Background" Click="GlobalOverlayHide_Click" HorizontalAlignment="Stretch" Height="40" Style="{StaticResource AccentButtonStyle}" Margin="0,10,0,0"/>
-                </StackPanel>
-            </Grid>
+                                    <Button Content="Run in Background" Click="GlobalOverlayHide_Click" HorizontalAlignment="Stretch" Height="36" Style="{StaticResource AccentButtonStyle}" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
         </Border>
     </Grid>
 </Window>
