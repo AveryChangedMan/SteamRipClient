@@ -400,7 +400,7 @@
                         <TextBlock Text="📋 Game Info" FontWeight="SemiBold" FontSize="15"/>
                         <StackPanel x:Name="GameInfoList" Spacing="6"/>
 
-                        <Button Content="🔗 Link Different Page" Click="ManualLinkBtn_Click"
+                        <Button Content="🔗 Manual Link" Click="ManualLinkBtn_Click"
                                 HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
                         <TextBlock Text="⚙️ System Requirements" FontWeight="SemiBold" FontSize="15" Margin="0,12,0,0"/>

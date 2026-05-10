@@ -1524,6 +1524,34 @@ namespace SteamRipApp
             var gf = FoundGames.FirstOrDefault(g => g.RootPath == path);
             if (gf == null) return;
 
+            string url = "";
+            var meta = GlobalSettings.Library.FirstOrDefault(m =>
+                m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Equals(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
+
+            string normPath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var matchedKey = GlobalSettings.GamePageLinks.Keys.FirstOrDefault(k =>
+                k.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Equals(normPath, StringComparison.OrdinalIgnoreCase));
+            if (matchedKey != null) url = GlobalSettings.GamePageLinks[matchedKey];
+            if (string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(meta?.Url)) url = meta!.Url;
+            if (string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(gf.Url)) url = gf.Url;
+
+            if (string.IsNullOrEmpty(url))
+            {
+                string folderName = Path.GetFileName(normPath);
+                var matchedKeyByFolder = GlobalSettings.GamePageLinks.Keys.FirstOrDefault(k =>
+                    Path.GetFileName(k.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                    .Equals(folderName, StringComparison.OrdinalIgnoreCase));
+                if (matchedKeyByFolder != null) url = GlobalSettings.GamePageLinks[matchedKeyByFolder];
+            }
+
+            if (string.IsNullOrEmpty(url))
+            {
+                var vInfo = RepairService.ReadVersionFile(path);
+                if (!string.IsNullOrEmpty(vInfo.SourceUrl)) url = vInfo.SourceUrl;
+            }
+
             var startConfirm = new ContentDialog
             {
                 Title = "🛠 Repair Game - Advanced Verification",
@@ -1580,7 +1608,7 @@ namespace SteamRipApp
                             File.WriteAllText(mapPath, JsonSerializer.Serialize(map, _jsonOptions));
 
                             StatusLabel.Text = "✅ Repair map generated! Running initial hash...";
-                            await RepairService.RunInitialHashAsync(path, path);
+                            await RepairService.RunInitialHashAsync(path, path, null, scanUrl);
                             StatusLabel.Text = "✅ Repair map and integrity map generated.";
                         }
                         else throw new Exception("Remote scan failed.");
@@ -1641,7 +1669,7 @@ namespace SteamRipApp
             {
 
                 StatusLabel.Text = "⏳ Generating integrity metadata... (Hashing files)";
-                await RepairService.RunInitialHashAsync(path, path);
+                await RepairService.RunInitialHashAsync(path, path, null, url);
 
                 StatusLabel.Text = "🔍 Re-analyzing after hashing...";
                 report = await RepairService.AnalyzeGameAsync(path, path, null, (status, pct) => {
@@ -1711,19 +1739,6 @@ namespace SteamRipApp
                 XamlRoot = this.XamlRoot
             };
             if (await App.ShowDialogSafeAsync(confirm) != ContentDialogResult.Primary) return;
-
-            var meta = GlobalSettings.Library.FirstOrDefault(m =>
-                m.LocalPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                .Equals(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
-
-            string url = "";
-            string normPath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var matchedKey = GlobalSettings.GamePageLinks.Keys.FirstOrDefault(k =>
-                k.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                .Equals(normPath, StringComparison.OrdinalIgnoreCase));
-            if (matchedKey != null) url = GlobalSettings.GamePageLinks[matchedKey];
-            if (string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(meta?.Url)) url = meta!.Url;
-            if (string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(gf.Url)) url = gf.Url;
 
             if (string.IsNullOrEmpty(url))
             {

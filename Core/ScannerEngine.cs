@@ -755,18 +755,24 @@ namespace SteamRipApp.Core
                     if (game.SteamAppId.HasValue && metadata != null) metadata.SteamAppId = game.SteamAppId;
                 }
 
-                string localVer = RepairService.ReadVersionFile(mainDir.FullName);
-                if (!string.IsNullOrEmpty(localVer)) game.Version = localVer;
+                var localVerInfo = RepairService.ReadVersionFile(mainDir.FullName);
+                if (!string.IsNullOrEmpty(localVerInfo.GameVersion)) game.Version = localVerInfo.GameVersion;
+                if (!string.IsNullOrEmpty(localVerInfo.SourceUrl)) game.Url = localVerInfo.SourceUrl;
 
                 if (metadata != null)
                 {
                     if (!string.IsNullOrEmpty(metadata.Url)) game.Url = metadata.Url;
                     if (!string.IsNullOrEmpty(metadata.ImageUrl)) game.ImageUrl = metadata.ImageUrl;
-                    if (!string.IsNullOrEmpty(metadata.Version)) { game.Version = metadata.Version; if (metadata.Version != localVer) RepairService.WriteVersionFile(mainDir.FullName, metadata.Version); }
+                    if (!string.IsNullOrEmpty(metadata.Version)) { game.Version = metadata.Version; if (metadata.Version != localVerInfo.GameVersion) RepairService.WriteVersionFile(mainDir.FullName, metadata.Version, game.Url); }
 
                     if (!string.IsNullOrEmpty(metadata.HowToRunNote)) game.HowToRunNote = metadata.HowToRunNote;
 
                     if (!string.IsNullOrEmpty(metadata.LatestVersion)) game.LatestVersion = metadata.LatestVersion;
+                }
+                else if (!string.IsNullOrEmpty(game.Url))
+                {
+
+                    RepairService.WriteVersionFile(mainDir.FullName, game.Version, game.Url);
                 }
 
                 if (string.IsNullOrEmpty(game.LocalImagePath) || !game.SteamAppId.HasValue)

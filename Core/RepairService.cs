@@ -158,14 +158,14 @@ namespace SteamRipApp.Core
             });
         }
 
-        public static async Task RunInitialHashAsync(string storagePath, string contentPath, string? version = null)
+        public static async Task RunInitialHashAsync(string storagePath, string contentPath, string? version = null, string? url = null)
         {
             Logger.Log($"[Repair] Running Initial Hash for: {contentPath}");
             lock (_pendingHashing)
             {
                 _pendingHashing.Remove(storagePath);
             }
-            await RunHashingProcessAsync(storagePath, contentPath, CancellationToken.None, version: version);
+            await RunHashingProcessAsync(storagePath, contentPath, CancellationToken.None, version: version, url: url);
 
             try
             {
@@ -222,21 +222,27 @@ namespace SteamRipApp.Core
             return cleaned.Replace('/', '\\');
         }
 
-        public static string ReadVersionFile(string storagePath)
+        public class VersionInfo
+        {
+            public string GameVersion { get; set; } = "";
+            public string SourceUrl { get; set; } = "";
+            public string RepairLogicVersion { get; set; } = "";
+        }
+
+        public static VersionInfo ReadVersionFile(string storagePath)
         {
             try
             {
                 string versionPath = Path.Combine(storagePath, VersionFileName);
-                if (!File.Exists(versionPath)) return "";
+                if (!File.Exists(versionPath)) return new VersionInfo();
 
                 var json = File.ReadAllText(versionPath);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("GameVersion", out var gv))
-                    return gv.GetString() ?? "";
+                var info = JsonSerializer.Deserialize<VersionInfo>(json, _jsonOptions);
+                if (info != null) return info;
 
-                return json.Split('\n')[0].Trim();
+                return new VersionInfo { GameVersion = json.Split('\n')[0].Trim() };
             }
-            catch { return ""; }
+            catch { return new VersionInfo(); }
         }
 
         public static VersionStatus CheckVersionFile(string storagePath)
@@ -278,21 +284,28 @@ namespace SteamRipApp.Core
             return VersionStatus.NoRipFiles;
         }
 
-        public static void WriteVersionFile(string storagePath, string? gameVersion = null)
+        public static void WriteVersionFile(string storagePath, string? gameVersion = null, string? sourceUrl = null)
         {
             try
             {
+
+                if (string.IsNullOrEmpty(sourceUrl))
+                {
+                    sourceUrl = ReadVersionFile(storagePath).SourceUrl;
+                }
+
                 var info = new
                 {
                     RepairLogicVersion = GlobalSettings.RepairLogicVersion,
                     AppVersion = GlobalSettings.AppVersion,
                     GameVersion = gameVersion ?? "",
+                    SourceUrl = sourceUrl ?? "",
                     GeneratedAt = DateTime.UtcNow.ToString("o"),
                     MachineName = Environment.MachineName
                 };
                 string versionPath = Path.Combine(storagePath, VersionFileName);
-                File.WriteAllText(versionPath, System.Text.Json.JsonSerializer.Serialize(info, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-                Logger.Log($"[Repair] Version stamp written to: {versionPath} (Game: {gameVersion ?? "N/A"})");
+                File.WriteAllText(versionPath, JsonSerializer.Serialize(info, _jsonOptions));
+                Logger.Log($"[Repair] Version stamp written to: {versionPath} (Game: {gameVersion ?? "N/A"}, URL: {(!string.IsNullOrEmpty(sourceUrl) ? "Yes" : "No")})");
             }
             catch (Exception ex)
             {
@@ -557,7 +570,7 @@ namespace SteamRipApp.Core
             await RunHashingProcessAsync(path, path, CancellationToken.None, name);
         }
 
-        private static async Task RunHashingProcessAsync(string storagePath, string contentPath, CancellationToken ct, string? snapshotName = null, string? version = null)
+        private static async Task RunHashingProcessAsync(string storagePath, string contentPath, CancellationToken ct, string? snapshotName = null, string? version = null, string? url = null)
         {
             try
             {
@@ -672,7 +685,7 @@ namespace SteamRipApp.Core
 
                     Logger.Log($"[Repair-Hashing] ✅ SCAN COMPLETE: (Processed {total}, Skipped {skipped})");
 
-                    WriteVersionFile(storagePath, version ?? "N/A");
+                    WriteVersionFile(storagePath, version ?? "N/A", url);
                 }
             }
             catch (OperationCanceledException) { }
@@ -906,7 +919,7 @@ namespace SteamRipApp.Core
             catch { return null; }
         }
 
-        public static async Task<ArchiveMap?> GenerateArchiveMapAsync(string archivePath, string storagePath, string? version = null)
+        public static async Task<ArchiveMap?> GenerateArchiveMapAsync(string archivePath, string storagePath, string? version = null, string? url = null)
         {
             try
             {
@@ -968,7 +981,7 @@ namespace SteamRipApp.Core
                     File.WriteAllText(mapPath, JsonSerializer.Serialize(map, _jsonOptions));
                     Logger.Log($"[Repair-Mapping] ✅ Mapping complete. Mapped {map.Entries.Count} files.");
 
-                    WriteVersionFile(storagePath, version);
+                    WriteVersionFile(storagePath, version, url);
                     return map;
                 }
                 return null;
@@ -1623,8 +1636,7 @@ namespace SteamRipApp.Core
                 catch { }
             }
 
-            long totalDownloadSize = 0;
-            var repairWork = new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)>();
+            var rawWork = new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)>();
 
             var sortedEntries = map.Entries.OrderBy(e => e.HeaderOffset).ToList();
             foreach (var relPath in toRepair)
@@ -1645,12 +1657,57 @@ namespace SteamRipApp.Core
                 long length = rangeEnd - rangeStart + 1;
                 if (length > 0)
                 {
-                    totalDownloadSize += length;
-                    repairWork.Add((relPath, entry, rangeStart, length));
+                    rawWork.Add((relPath, entry, rangeStart, length));
                 }
             }
 
-            int totalFiles = repairWork.Count;
+            rawWork = rawWork.OrderBy(w => w.RangeStart).ToList();
+
+            var repairChunks = new List<List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)>>();
+            var currentChunk = new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)>();
+
+            long THRESHOLD_20MB = 20 * 1024 * 1024;
+
+            foreach (var work in rawWork)
+            {
+                if (work.Length >= THRESHOLD_20MB || map.IsSolid)
+                {
+                    if (currentChunk.Any())
+                    {
+                        repairChunks.Add(currentChunk);
+                        currentChunk = new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)>();
+                    }
+                    repairChunks.Add(new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)> { work });
+                }
+                else
+                {
+                    if (!currentChunk.Any())
+                    {
+                        currentChunk.Add(work);
+                    }
+                    else
+                    {
+                        var lastItem = currentChunk.Last();
+                        long gap = work.RangeStart - (lastItem.RangeStart + lastItem.Length);
+                        long currentNeeded = currentChunk.Sum(w => w.Length);
+                        long gapThreshold = currentNeeded + work.Length;
+
+                        if (gap <= gapThreshold)
+                        {
+                            currentChunk.Add(work);
+                        }
+                        else
+                        {
+                            repairChunks.Add(currentChunk);
+                            currentChunk = new List<(string RelPath, ArchiveEntry Entry, long RangeStart, long Length)> { work };
+                        }
+                    }
+                }
+            }
+            if (currentChunk.Any()) repairChunks.Add(currentChunk);
+
+            long totalDownloadSize = repairChunks.Sum(chunk => chunk.Max(c => c.RangeStart + c.Length - 1) - chunk.Min(c => c.RangeStart) + 1);
+
             long globalDownloaded = 0;
             long lastUiUpdate = 0;
             long lastDiskUpdate = 0;
@@ -1658,33 +1715,18 @@ namespace SteamRipApp.Core
 
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = map.IsSolid ? 1 : 12, CancellationToken = ct };
 
-            await Parallel.ForEachAsync(repairWork, parallelOptions, async (work, token) =>
+            await Parallel.ForEachAsync(repairChunks, parallelOptions, async (chunk, token) =>
             {
-                string relPath = work.RelPath;
-                var entry = work.Entry;
-                long rangeStart = work.RangeStart;
-                long length = work.Length;
+                long chunkStart = chunk.Min(c => c.RangeStart);
+                long chunkEnd = chunk.Max(c => c.RangeStart + c.Length - 1);
+                long chunkLength = chunkEnd - chunkStart + 1;
 
                 var gf = ScannerEngine.FoundGames.FirstOrDefault(g => g.RootPath.Equals(contentPath, StringComparison.OrdinalIgnoreCase));
-
-                string fileName = Path.GetFileName(relPath);
-                long lastDownloadedForThisFile = 0;
-
-                string targetPath = relPath;
-                string fullPath = Path.Combine(contentPath, targetPath);
-
-                if (!File.Exists(fullPath) && commonRoot != null && targetPath.StartsWith(commonRoot, StringComparison.OrdinalIgnoreCase))
-                {
-                    string stripped = targetPath[commonRoot.Length..];
-                    if (File.Exists(Path.Combine(contentPath, stripped)) || !File.Exists(fullPath))
-                    {
-                        targetPath = stripped;
-                    }
-                }
+                long lastDownloadedForThisChunk = 0;
 
                 try
                 {
-                    bool useTempFile = entry.PackedSize > 30 * 1024 * 1024;
+                    bool useTempFile = chunkLength > 30 * 1024 * 1024;
                     Stream extractionStream;
                     string? tempFilePath = null;
 
@@ -1702,9 +1744,9 @@ namespace SteamRipApp.Core
                     {
                         await extractionStream.WriteAsync(prefix.AsMemory(), token);
 
-                        await DownloadRangeToStreamWithProgressAsync(downloadUrl, rangeStart, length, extractionStream, (downloadedInThisFile) => {
-                            long delta = downloadedInThisFile - lastDownloadedForThisFile;
-                            lastDownloadedForThisFile = downloadedInThisFile;
+                        await DownloadRangeToStreamWithProgressAsync(downloadUrl, chunkStart, chunkLength, extractionStream, (downloadedInThisChunk) => {
+                            long delta = downloadedInThisChunk - lastDownloadedForThisChunk;
+                            lastDownloadedForThisChunk = downloadedInThisChunk;
 
                             long totalSoFar = Interlocked.Add(ref globalDownloaded, delta);
 
@@ -1716,7 +1758,8 @@ namespace SteamRipApp.Core
                                 {
                                     double globalPct = (totalSoFar * 100.0) / Math.Max(1, totalDownloadSize);
                                     string progStr = FormatProgressString(totalSoFar, totalDownloadSize);
-                                    onProgress?.Invoke($"{progStr} Restoring {fileName}...", globalPct);
+                                    string fileNameDisplay = chunk.Count > 1 ? $"{chunk.Count} files (merged)" : Path.GetFileName(chunk[0].RelPath);
+                                    onProgress?.Invoke($"{progStr} Restoring {fileNameDisplay}...", globalPct);
 
                                     if (gf != null)
                                     {
@@ -1752,45 +1795,63 @@ namespace SteamRipApp.Core
                         extractionStream.Position = 0;
                         using (var reader = SharpCompress.Readers.Rar.RarReader.Open(extractionStream))
                         {
-                            if (reader.MoveToNextEntry())
+                            while (reader.MoveToNextEntry())
                             {
-                                string outDir = Path.GetDirectoryName(Path.Combine(contentPath, targetPath))!;
-                                if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
-                                reader.WriteEntryToDirectory(outDir, new SharpCompress.Common.ExtractionOptions { ExtractFullPath = false, Overwrite = true });
-                                Logger.Log($"[Repair] [OK] Restored: {relPath}");
+                                var currentEntry = reader.Entry;
+                                if (currentEntry.IsDirectory) continue;
 
-                                if (skeleton != null)
+                                var targetWork = chunk.FirstOrDefault(w => w.RelPath.Equals(currentEntry.Key, StringComparison.OrdinalIgnoreCase));
+                                if (targetWork.RelPath != null)
                                 {
+                                    string relPath = targetWork.RelPath;
+                                    string targetPath = relPath;
+                                    string fullPath = Path.Combine(contentPath, targetPath);
 
-                                    string fullOutPath = Path.Combine(contentPath, targetPath);
-                                    lock (skeleton)
+                                    if (!File.Exists(fullPath) && commonRoot != null && targetPath.StartsWith(commonRoot, StringComparison.OrdinalIgnoreCase))
                                     {
-
-                                        skeleton.Files.RemoveAll(sf =>
-                                            sf.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase) &&
-                                            !relPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
-
-                                        var skelFile = skeleton.Files.FirstOrDefault(sf => sf.Path.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
-                                        if (skelFile == null)
+                                        string stripped = targetPath[commonRoot.Length..];
+                                        if (File.Exists(Path.Combine(contentPath, stripped)) || !File.Exists(fullPath))
                                         {
-                                            skelFile = new SkeletonFile { Path = targetPath };
-                                            skeleton.Files.Add(skelFile);
+                                            targetPath = stripped;
                                         }
+                                    }
 
-                                        try {
-                                            var fi = new FileInfo(fullOutPath);
-                                            if (fi.Exists) {
-                                                skelFile.Size = fi.Length;
-                                                skelFile.FileId = GetFileFingerprint(fullOutPath, out long fileTime);
-                                                skelFile.FileTime = fileTime;
-                                                skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
+                                    string outDir = Path.GetDirectoryName(Path.Combine(contentPath, targetPath))!;
+                                    if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
 
-                                                skelFile.Hash = ComputeXXHash64(fullOutPath);
+                                    reader.WriteEntryToDirectory(outDir, new SharpCompress.Common.ExtractionOptions { ExtractFullPath = false, Overwrite = true });
+                                    Logger.Log($"[Repair] [OK] Restored: {relPath}");
 
-                                                Logger.Log($"[Repair] Updated skeleton for {targetPath}: Hash={skelFile.Hash}, Size={skelFile.Size}");
+                                    if (skeleton != null)
+                                    {
+                                        string fullOutPath = Path.Combine(contentPath, targetPath);
+                                        lock (skeleton)
+                                        {
+                                            skeleton.Files.RemoveAll(sf =>
+                                                sf.Path.Equals(relPath, StringComparison.OrdinalIgnoreCase) &&
+                                                !relPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+
+                                            var skelFile = skeleton.Files.FirstOrDefault(sf => sf.Path.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
+                                            if (skelFile == null)
+                                            {
+                                                skelFile = new SkeletonFile { Path = targetPath };
+                                                skeleton.Files.Add(skelFile);
                                             }
-                                        } catch (Exception ex) {
-                                            Logger.Log($"[Repair] Warning: Failed to update metadata for {targetPath}: {ex.Message}");
+
+                                            try {
+                                                var fi = new FileInfo(fullOutPath);
+                                                if (fi.Exists) {
+                                                    skelFile.Size = fi.Length;
+                                                    skelFile.FileId = GetFileFingerprint(fullOutPath, out long fileTime);
+                                                    skelFile.FileTime = fileTime;
+                                                    skelFile.LastWriteTime = DateTime.UtcNow.Ticks;
+                                                    skelFile.Hash = ComputeXXHash64(fullOutPath);
+
+                                                    Logger.Log($"[Repair] Updated skeleton for {targetPath}: Hash={skelFile.Hash}, Size={skelFile.Size}");
+                                                }
+                                            } catch (Exception ex) {
+                                                Logger.Log($"[Repair] Warning: Failed to update metadata for {targetPath}: {ex.Message}");
+                                            }
                                         }
                                     }
                                 }
@@ -1799,7 +1860,7 @@ namespace SteamRipApp.Core
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log($"[Repair] [Error] Extraction failed for {relPath}: {ex.Message}");
+                        Logger.Log($"[Repair] [Error] Extraction failed for chunk: {ex.Message}");
                     }
                     finally
                     {
@@ -1812,7 +1873,7 @@ namespace SteamRipApp.Core
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"[Repair] [Error] Task failed for {relPath}: {ex.Message}");
+                    Logger.Log($"[Repair] [Error] Setup failed for chunk: {ex.Message}");
                 }
             });
 
@@ -2355,7 +2416,7 @@ namespace SteamRipApp.Core
                 File.WriteAllText(skelPath, JsonSerializer.Serialize(skeleton, _jsonOptions));
 
                 onProgress?.Invoke("Update complete!", 100);
-                WriteVersionFile(rootPath, newVersion);
+                WriteVersionFile(rootPath, newVersion, newUrl);
                 Logger.Log($"[Update] Smart update completed successfully for {rootPath}.");
                 return true;
             } catch (Exception ex) {

@@ -116,7 +116,7 @@ namespace SteamRipApp.Core
             if (shouldMap)
             {
                 onStatus?.Invoke("🗺️ Generating archive map...");
-                await RepairService.GenerateArchiveMapAsync(archivePath, gameExtractionDir, version);
+                await RepairService.GenerateArchiveMapAsync(archivePath, gameExtractionDir, version, steamRipPageUrl);
             }
 
             await Task.Run(() => {
@@ -137,14 +137,14 @@ namespace SteamRipApp.Core
             onStatus?.Invoke("📚 Finalizing library registration...");
 
             Logger.Log($"[Repair] Running Initial Hash for: {gameExtractionDir}");
-            await RepairService.RunInitialHashAsync(gameExtractionDir, gameExtractionDir, version);
+            await RepairService.RunInitialHashAsync(gameExtractionDir, gameExtractionDir, version, steamRipPageUrl);
 
             onStatus?.Invoke("🖼 Copying cover image...");
             string? localImagePath = null;
             if (!string.IsNullOrEmpty(imageUrl))
             {
 
-                await ScannerEngine.DownloadGameImageAsync(imageUrl, gameExtractionDir);
+                await ScannerEngine.DownloadGameImageAsync(imageUrl, gameExtractionDir, overwrite: true);
                 var expectedPath = Path.Combine(gameExtractionDir, "folder.jpg");
                 if (File.Exists(expectedPath))
                 {

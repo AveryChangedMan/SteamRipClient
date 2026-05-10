@@ -334,6 +334,8 @@ namespace SteamRipApp
                     Directory.Delete(gf.RootPath, true);
 
                 if (meta != null) GlobalSettings.Library.Remove(meta);
+                GlobalSettings.GamePageLinks.Remove(gf.RootPath);
+                GlobalSettings.GamePageLinks.Remove(gf.RootPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
                 GlobalSettings.Save();
 
                 await RefreshAll();

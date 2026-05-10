@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="SteamRIP Engine v1.5.2.5">
+    Title="SteamRIP Engine v1.5.2.8">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
@@ -191,7 +191,18 @@
                 </StackPanel>
             </Grid>
         </Border>
-        <WebView2 x:Name="RepairInterceptor" Visibility="Collapsed" Width="1" Height="1" Grid.RowSpan="2"/>
+        <Grid x:Name="RepairInterceptorOverlay" Visibility="Collapsed" Grid.RowSpan="2" Canvas.ZIndex="1000" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <StackPanel Orientation="Vertical" Padding="16" Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}">
+                <TextBlock Text="Anti-Bot Verification Required" FontWeight="Bold" FontSize="16"/>
+                <TextBlock Text="Please solve the captcha. If a download button appears, click it to continue." Opacity="0.8" Margin="0,4,0,0"/>
+                <Button Content="Cancel" Click="CancelRepairInterceptor_Click" Margin="0,12,0,0"/>
+            </StackPanel>
+            <WebView2 x:Name="RepairInterceptor" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        </Grid>
 
         <Border x:Name="GlobalProgressOverlay"
                 Visibility="Collapsed"

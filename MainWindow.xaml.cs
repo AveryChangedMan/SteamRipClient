@@ -415,7 +415,7 @@ namespace SteamRipApp
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
             var (currentX1, currentX2, currentX3, _) = ParseVersion(GlobalSettings.AppVersion);
-            var (targetX1, targetX2, targetX3, _) = ParseVersion("1.5.2.5");
+            var (targetX1, targetX2, targetX3, _) = ParseVersion("1.5.2.8");
 
             bool isOldVersion = (currentX1 < targetX1)
                 || (currentX1 == targetX1 && currentX2 < targetX2)
@@ -559,7 +559,7 @@ namespace SteamRipApp
                 GlobalSettings.ScanDirectories.Add(GlobalSettings.DownloadDirectory);
 
             GlobalSettings.IsSetupCompleted = true;
-            GlobalSettings.AppVersion = "1.5.2.5";
+            GlobalSettings.AppVersion = "1.5.2.8";
             GlobalSettings.Save();
 
             Logger.Log($"[Setup] Completed. Download Dir: {GlobalSettings.DownloadDirectory}");
@@ -1150,11 +1150,22 @@ namespace SteamRipApp
                     _repairInterceptorReady = true;
                 }
 
+                RepairInterceptorOverlay.Visibility = Visibility.Visible;
                 RepairInterceptor.Source = new Uri(targetUrl);
-                var completedTask = await Task.WhenAny(_repairUrlTcs.Task, Task.Delay(45000));
+                var completedTask = await Task.WhenAny(_repairUrlTcs.Task, Task.Delay(60000));
+
+                RepairInterceptorOverlay.Visibility = Visibility.Collapsed;
                 if (completedTask == _repairUrlTcs.Task) return await _repairUrlTcs.Task;
                 return "";
-            } catch { return ""; }
+            } catch {
+                RepairInterceptorOverlay.Visibility = Visibility.Collapsed;
+                return "";
+            }
+        }
+
+        private void CancelRepairInterceptor_Click(object sender, RoutedEventArgs e)
+        {
+            _repairUrlTcs?.TrySetResult("");
         }
 
         private async void FixMetadata_Click(object sender, RoutedEventArgs e)

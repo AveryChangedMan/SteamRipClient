@@ -166,7 +166,7 @@ namespace SteamRipApp.Core
         public bool AntivirusExclusionAdded { get; set; }
         public bool IsAdvancedRepairVisible { get; set; } = false;
         public bool IsHddModeEnabled { get; set; } = false;
-        public string AppVersion { get; set; } = "1.5.2.5";
+        public string AppVersion { get; set; } = "1.5.2.8";
         public string? HashingProgress { get; set; }
         public bool IsSteamUpdateRequired { get; set; }
         public string RepairLogicVersion { get; set; } = "1.4.0";
@@ -209,7 +209,7 @@ namespace SteamRipApp.Core
         public static bool IsSteamUpdateRequired { get; set; }
         public static bool IsAdvancedRepairVisible { get; set; } = false;
         public static bool IsHddModeEnabled { get; set; } = false;
-        public static string AppVersion { get; set; } = "1.5.2.5";
+        public static string AppVersion { get; set; } = "1.5.2.8";
         public static string RepairLogicVersion { get; set; } = "1.4.0";
 
         private static readonly string SavePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamRipApp", "settings.json");
