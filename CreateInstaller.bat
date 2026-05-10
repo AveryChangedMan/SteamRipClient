@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 set PROJECT_NAME=SteamRipApp
 set OUTPUT_DIR=Dist\SteamRip
 
@@ -13,7 +13,7 @@ if "%NEW_VER%"=="" (
     echo Keeping existing version...
 ) else (
     echo Updating version to %NEW_VER%...
-    powershell -Command "$manifest = [xml](Get-Content 'Package.appxmanifest'); $manifest.Package.Identity.Version = '%NEW_VER%'; $manifest.Save('Package.appxmanifest'); (Get-Content 'Core\GlobalSettings.cs') -replace 'AppVersion \{ get; set; \} = \".*?\"', ('AppVersion { get; set; } = \"%NEW_VER%\"') | Set-Content 'Core\GlobalSettings.cs'; if (Test-Path 'CHANGELOG.md') { (Get-Content 'CHANGELOG.md') -replace 'v\d+\.\d+\.\d+\.\d+', 'v%NEW_VER%' -replace 'version \d+\.\d+\.\d+\.\d+', 'version %NEW_VER%' | Set-Content 'CHANGELOG.md' }; (Get-Content 'MainWindow.xaml.cs') -replace 'ParseVersion\(\"\d+\.\d+\..*?\"\)', 'ParseVersion(\"%NEW_VER%\")' -replace 'AppVersion = \"\d+\.\d+\..*?\"', 'AppVersion = \"%NEW_VER%\"' | Set-Content 'MainWindow.xaml.cs'; echo 'Successfully Synchronized all metadata and manifests to version: %NEW_VER%'"
+    powershell -ExecutionPolicy Bypass -Command "$v = '%NEW_VER%'; if ($v) { $err = $false; $q = [char]34; Write-Host '  [1/5] Package.appxmanifest ...'; try { [xml]$m = Get-Content 'Package.appxmanifest'; $m.Package.Identity.Version = $v; $m.Save((Resolve-Path 'Package.appxmanifest')); Write-Host '        OK' } catch { Write-Host ('        FAILED: ' + $_.Exception.Message); $err = $true }; Write-Host '  [2/5] MainWindow.xaml (title) ...'; try { (Get-Content 'MainWindow.xaml') -replace ('Title=' + $q + '.*?SteamRIP Engine v[\d.]+' + $q), ('Title=' + $q + 'SteamRIP Engine v' + $v + $q) | Set-Content 'MainWindow.xaml'; Write-Host '        OK' } catch { Write-Host ('        FAILED: ' + $_.Exception.Message); $err = $true }; Write-Host '  [3/5] MainWindow.xaml.cs (CurrentAppVersion const) ...'; try { (Get-Content 'MainWindow.xaml.cs') -replace ('CurrentAppVersion = ' + $q + '[\d.]+' + $q + ';'), ('CurrentAppVersion = ' + $q + $v + $q + ';') | Set-Content 'MainWindow.xaml.cs'; Write-Host '        OK' } catch { Write-Host ('        FAILED: ' + $_.Exception.Message); $err = $true }; Write-Host '  [4/5] Core\GlobalSettings.cs (AppVersion) ...'; try { (Get-Content 'Core\GlobalSettings.cs') -replace ('AppVersion \{ get; set; \} = ' + $q + '[\d.]+' + $q + ';'), ('AppVersion { get; set; } = ' + $q + $v + $q + ';') -replace ('AppVersion = data\.AppVersion \?\? ' + $q + '[\d.]+' + $q + ';'), ('AppVersion = data.AppVersion ?? ' + $q + $v + $q + ';') | Set-Content 'Core\GlobalSettings.cs'; Write-Host '        OK' } catch { Write-Host ('        FAILED: ' + $_.Exception.Message); $err = $true }; Write-Host '  [5/5] CHANGELOG.md ...'; try { if (Test-Path 'CHANGELOG.md') { (Get-Content 'CHANGELOG.md') -replace 'v\d+\.\d+\.\d+\.\d+', ('v' + $v) | Set-Content 'CHANGELOG.md'; Write-Host '        OK' } } catch { }; if ($err) { Write-Host 'WARNING: Errors occurred.' } else { Write-Host ('Successfully updated to: ' + $v) } }"
 )
 
 set "CLEAN_BUILD="

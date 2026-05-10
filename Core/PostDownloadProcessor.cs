@@ -20,7 +20,8 @@ namespace SteamRipApp.Core
             Action<string>? onStatus = null,
             Action<double>? onProgress = null,
             Func<long, long, Task<bool>>? confirmSpace = null,
-            Func<string, Task<bool>>? confirmMap = null)
+            Func<string, Task<bool>>? confirmMap = null,
+            Action<string, long, long>? onFileProgress = null)
         {
             Logger.Log($"[PostDownload] Starting post-download for: {gameTitle}");
 
@@ -101,7 +102,8 @@ namespace SteamRipApp.Core
                 onProgress: onProgress,
                 onStatus: onStatus,
                 deleteAfter: false,
-                gameTitle: gameTitle
+                gameTitle: gameTitle,
+                onFileProgress: onFileProgress
             );
 
             if (!extracted)

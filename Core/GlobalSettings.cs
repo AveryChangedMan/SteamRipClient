@@ -341,7 +341,7 @@ namespace SteamRipApp.Core
                         HashingProgress = data.HashingProgress;
                         IsSteamUpdateRequired = data.IsSteamUpdateRequired;
                         IsAdvancedRepairVisible = data.IsAdvancedRepairVisible;
-                        GlobalSettings.AppVersion = data.AppVersion ?? "1.5.2.5";
+                        GlobalSettings.AppVersion = data.AppVersion ?? "1.5.2.9";
                         RepairLogicVersion = data.RepairLogicVersion ?? "1.2.1";
                         IsHddModeEnabled = data.IsHddModeEnabled;
 

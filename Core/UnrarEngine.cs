@@ -84,13 +84,14 @@ namespace SteamRipApp.Core
             string outputDir,
             Action<double>? onProgress = null,
             Action<string>? onStatus = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            Action<string, long, long>? onFileProgress = null)
         {
 
             string dllDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Redist", "Deps");
             SetDllDirectory(dllDir);
 
-            return await Task.Run(() => ExtractInternal(archivePath, outputDir, onProgress, onStatus, ct));
+            return await Task.Run(() => ExtractInternal(archivePath, outputDir, onProgress, onStatus, ct, onFileProgress));
         }
 
         private static unsafe bool ExtractInternal(
@@ -98,7 +99,8 @@ namespace SteamRipApp.Core
             string outputDir,
             Action<double>? onProgress,
             Action<string>? onStatus,
-            CancellationToken ct)
+            CancellationToken ct,
+            Action<string, long, long>? onFileProgress = null)
         {
             var data = new RAROpenArchiveDataEx
             {
@@ -151,19 +153,31 @@ namespace SteamRipApp.Core
 
                 onStatus?.Invoke($"📦 Extracting {fileCount} files...");
 
+                string _currentFileName = "";
+                long _currentFileSize   = 0;
+                long _currentFileBytes  = 0;
+
                 _callback = (msg, userData, p1, p2) =>
                 {
                     if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return -1;
 
                     if (msg == UCM_PROCESSDATA)
                     {
-                        long size = p2.ToInt64();
-                        Interlocked.Add(ref currentUnpackedSize, size);
+                        long chunk = p2.ToInt64();
+
+                        long overall = Interlocked.Add(ref currentUnpackedSize, chunk);
+
+                        _currentFileBytes += chunk;
+
                         if (totalUnpackedSize > 0)
                         {
-                            double pct = (double)currentUnpackedSize / totalUnpackedSize * 100.0;
-                            onProgress?.Invoke(Math.Min(pct, 100));
+
+                            double blended = (double)overall / totalUnpackedSize * 100.0;
+                            onProgress?.Invoke(Math.Min(blended, 99.9));
                         }
+
+                        if (onFileProgress != null && !string.IsNullOrEmpty(_currentFileName))
+                            onFileProgress(_currentFileName, _currentFileBytes, _currentFileSize);
                     }
                     return 0;
                 };
@@ -175,7 +189,11 @@ namespace SteamRipApp.Core
                 {
                     if (ct.IsCancellationRequested || GlobalSettings.IsShuttingDown) return false;
 
-                    string fileName = Marshal.PtrToStringUni((IntPtr)header.FileNameW) ?? "unknown";
+                    _currentFileName  = Marshal.PtrToStringUni((IntPtr)header.FileNameW) ?? "";
+                    _currentFileSize  = ((long)header.UnpSizeHigh << 32) | header.UnpSize;
+                    _currentFileBytes = 0;
+
+                    string fileName = _currentFileName.Length > 0 ? _currentFileName : "unknown";
                     int result = RARProcessFile(hArchive, RAR_EXTRACT, outputDir, null);
                     if (result != 0)
                     {

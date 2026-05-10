@@ -444,6 +444,21 @@ namespace SteamRipApp
                         if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Extracting Game...", pct);
                         else mainWindow?.UpdateGlobalOverlay("Extracting Game...", pct);
                     }),
+                    onFileProgress: (fileName, fileBytes, fileTotalBytes) => this.DispatcherQueue.TryEnqueue(() => {
+
+                        string truncName = fileName.Length > 32 ? fileName[..29] + "..." : fileName;
+
+                        string dots = ((Environment.TickCount64 / 400) % 3) switch { 0 => ".", 1 => "..", _ => "..." };
+                        string fileSub = fileTotalBytes > 0
+                            ? $"{fileBytes / (1024.0 * 1024):F1} / {fileTotalBytes / (1024.0 * 1024):F1} MB"
+                            : "";
+                        string fileStatus = string.IsNullOrEmpty(fileSub)
+                            ? $"Extracting {truncName}{dots}"
+                            : $"Extracting {truncName}{dots}  {fileSub}";
+                        metadata.Status = fileStatus;
+                        if (task != null) mainWindow?.UpdateGlobalOverlay(task, "Extracting Game...", null, fileStatus);
+                        else mainWindow?.UpdateGlobalOverlay("Extracting Game...", null, fileStatus);
+                    }),
                     confirmSpace: async (free, req) => {
                         var tcs = new TaskCompletionSource<bool>();
                         this.DispatcherQueue.TryEnqueue(async () => {

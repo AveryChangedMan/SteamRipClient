@@ -183,7 +183,7 @@ namespace SteamRipApp
 
                 if (isGoFile && hasProgressFile)
                 {
-                    string gofilePageUrl = dl.PageUrl;
+                    string gofilePageUrl = dl.PageUrl ?? "";
 
                     if (string.IsNullOrEmpty(gofilePageUrl) || !gofilePageUrl.Contains("gofile.io"))
                     {
@@ -223,8 +223,8 @@ namespace SteamRipApp
                     }
                 }
 
-                var downloader = new CustomDownloader(dl.SourceUrl, dl.DestPath);
-                downloader.BuzzheavierPageUrl = dl.PageUrl;
+                var downloader = new CustomDownloader(dl.SourceUrl ?? "", dl.DestPath);
+                downloader.BuzzheavierPageUrl = dl.PageUrl ?? "";
                 downloader.SteamRipPageUrl = dl.SteamRipUrl;
                 downloader.ImageUrl = dl.ImageUrl;
                 downloader.ThreadCount = isGoFile ? CustomDownloader.MaxThreads : 12;
@@ -287,6 +287,17 @@ namespace SteamRipApp
                         version: version,
                         onStatus: msg => this.DispatcherQueue.TryEnqueue(() => dl.Status = msg),
                         onProgress: pct => this.DispatcherQueue.TryEnqueue(() => { dl.Percentage = pct; dl.NotifyAll(); }),
+                        onFileProgress: (fileName, fileBytes, fileTotalBytes) => this.DispatcherQueue.TryEnqueue(() => {
+                            string truncName = fileName.Length > 32 ? fileName[..29] + "..." : fileName;
+                            string dots = ((Environment.TickCount64 / 400) % 3) switch { 0 => ".", 1 => "..", _ => "..." };
+                            string fileSub = fileTotalBytes > 0
+                                ? $"{fileBytes / (1024.0 * 1024):F1} / {fileTotalBytes / (1024.0 * 1024):F1} MB"
+                                : "";
+                            dl.Status = string.IsNullOrEmpty(fileSub)
+                                ? $"Extracting {truncName}{dots}"
+                                : $"Extracting {truncName}{dots}  {fileSub}";
+                            dl.NotifyAll();
+                        }),
                         confirmMap: async (title) => {
                             if (GlobalSettings.AlwaysCreateRarMap) return true;
                             var tcs = new TaskCompletionSource<bool>();
@@ -476,6 +487,17 @@ namespace SteamRipApp
                     version: version,
                     onStatus: msg => this.DispatcherQueue.TryEnqueue(() => dl.Status = msg),
                     onProgress: pct => this.DispatcherQueue.TryEnqueue(() => { dl.Percentage = pct; dl.NotifyAll(); }),
+                    onFileProgress: (fileName, fileBytes, fileTotalBytes) => this.DispatcherQueue.TryEnqueue(() => {
+                        string truncName = fileName.Length > 32 ? fileName[..29] + "..." : fileName;
+                        string dots = ((Environment.TickCount64 / 400) % 3) switch { 0 => ".", 1 => "..", _ => "..." };
+                        string fileSub = fileTotalBytes > 0
+                            ? $"{fileBytes / (1024.0 * 1024):F1} / {fileTotalBytes / (1024.0 * 1024):F1} MB"
+                            : "";
+                        dl.Status = string.IsNullOrEmpty(fileSub)
+                            ? $"Extracting {truncName}{dots}"
+                            : $"Extracting {truncName}{dots}  {fileSub}";
+                        dl.NotifyAll();
+                    }),
                     confirmMap: async (title) => {
                         if (GlobalSettings.AlwaysCreateRarMap) return true;
                         return true;

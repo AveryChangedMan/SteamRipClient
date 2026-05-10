@@ -15,9 +15,9 @@ namespace SteamRipApp
 {
     public class GlobalTask : System.ComponentModel.INotifyPropertyChanged
     {
-        private string _title;
-        private string _status;
-        private string _subStatus;
+        private string _title = "";
+        private string _status = "";
+        private string _subStatus = "";
         private double _progress;
         private bool _isIndeterminate = true;
 
@@ -27,8 +27,8 @@ namespace SteamRipApp
         public double Progress { get => _progress; set { _progress = value; OnPropertyChanged(); } }
         public bool IsIndeterminate { get => _isIndeterminate; set { _isIndeterminate = value; OnPropertyChanged(); } }
 
-        public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string name = null) =>
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? name = null) =>
             PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
     }
 
@@ -216,12 +216,13 @@ namespace SteamRipApp
         {
             try
             {
-                var (localX1, localX2, localX3, _) = ParseVersion(localVersion);
-                var (remoteX1, remoteX2, remoteX3, _) = ParseVersion(remoteVersion);
+                var (localX1, localX2, localX3, localX4) = ParseVersion(localVersion);
+                var (remoteX1, remoteX2, remoteX3, remoteX4) = ParseVersion(remoteVersion);
 
-                return remoteX1 > localX1
-                    || (remoteX1 == localX1 && remoteX2 > localX2)
-                    || (remoteX1 == localX1 && remoteX2 == localX2 && remoteX3 > localX3);
+                if (remoteX1 != localX1) return remoteX1 > localX1;
+                if (remoteX2 != localX2) return remoteX2 > localX2;
+                if (remoteX3 != localX3) return remoteX3 > localX3;
+                return remoteX4 > localX4;
             }
             catch { return false; }
         }
@@ -412,14 +413,17 @@ namespace SteamRipApp
             }
         }
 
+        private const string CurrentAppVersion = "1.5.2.9";
+
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
-            var (currentX1, currentX2, currentX3, _) = ParseVersion(GlobalSettings.AppVersion);
-            var (targetX1, targetX2, targetX3, _) = ParseVersion("1.5.2.9");
+            var (currentX1, currentX2, currentX3, currentX4) = ParseVersion(GlobalSettings.AppVersion);
+            var (targetX1, targetX2, targetX3, targetX4)     = ParseVersion(CurrentAppVersion);
 
             bool isOldVersion = (currentX1 < targetX1)
                 || (currentX1 == targetX1 && currentX2 < targetX2)
-                || (currentX1 == targetX1 && currentX2 == targetX2 && currentX3 < targetX3);
+                || (currentX1 == targetX1 && currentX2 == targetX2 && currentX3 < targetX3)
+                || (currentX1 == targetX1 && currentX2 == targetX2 && currentX3 == targetX3 && currentX4 < targetX4);
 
             if (GlobalSettings.IsSetupCompleted && !isOldVersion) return;
 
@@ -559,7 +563,7 @@ namespace SteamRipApp
                 GlobalSettings.ScanDirectories.Add(GlobalSettings.DownloadDirectory);
 
             GlobalSettings.IsSetupCompleted = true;
-            GlobalSettings.AppVersion = "1.5.2.9";
+            GlobalSettings.AppVersion = CurrentAppVersion;
             GlobalSettings.Save();
 
             Logger.Log($"[Setup] Completed. Download Dir: {GlobalSettings.DownloadDirectory}");
