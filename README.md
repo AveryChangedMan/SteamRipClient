@@ -18,7 +18,7 @@ A desktop client for downloading, extracting, and managing local PC games.
 4. The app will download and extract the files and then add it to your library.
 5. Click Launch inside library, or add to steam if you prefer.
 
-*Current Version: 1.5.2.8*
+*Current Version: 1.5.2.9*
 # Images
 
 <img width="1919" height="1027" alt="image" src="https://github.com/user-attachments/assets/7f0385ee-51ef-47d4-9f45-ba8465ba3fb3" />
