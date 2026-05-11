@@ -26,7 +26,30 @@ A desktop client for downloading, extracting, and managing local PC games.
 <img width="1919" height="1029" alt="image" src="https://github.com/user-attachments/assets/48111f5f-f074-4fee-af07-d7b31392e868" />
 <img width="1919" height="1032" alt="image" src="https://github.com/user-attachments/assets/01a922d0-636a-48d4-9bcd-8335f5888481" />
 
+# How to use
+### 📦 Option 1: MSIX Installer (Recommended)
+Because the MSIX package is self-signed for development, Windows requires you to manually trust the certificate before it allows the installation.
 
+#### 1. Trust the Certificate
+Before opening the MSIX file, you **must** run the certificate batch script.
+*   Locate `TrustCertificate.bat` in your download folder.
+*   **Right-click** the file and select **"Run as Administrator"**.
+*   This script adds the app's signature to your "Trusted Root Certification Authorities" and "Trusted People" stores. Without this, Windows will show a "Publisher Unknown" error and block the install.
+
+#### 2. Run the MSIX
+*   Double-click the `.msix` (or `.msixbundle`) file.
+*   Click **Install**.
+*   Windows will manage the installation, Start Menu shortcuts, and clean uninstalls.
+
+
+### 📂 Option 2: Binary ZIP Files (Portable)
+Use this version if you want to run the app from an external drive or avoid system-level installation.
+
+1.  **Extract All:** Right-click the `.zip` and extract it to a permanent folder (e.g., `Desktop`). 
+    *   *Warning:* Do not run the app from inside the compressed folder
+2.  **Launch:** Run the primary `SteamRipApp.exe` within the extracted folder.
+
+---
 <br>
 <sub><i>Tags:
 steamrip, steamripapp, steamripclient, free game downloader, steamrip game managermsix</i></sub>
