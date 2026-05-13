@@ -8,7 +8,7 @@ cd /d "%~dp0"
 echo Starting Production Build for %PROJECT_NAME%...
 
 set "NEW_VER="
-set /p NEW_VER="Enter new version (e.g. 1.5.2.8) or leave blank to keep current: "
+set /p NEW_VER="Enter new version (e.g. 1.5.2.9) or leave blank to keep current: "
 if "%NEW_VER%"=="" (
     echo Keeping existing version...
 ) else (
