@@ -41,7 +41,8 @@ namespace SteamRipApp.Core
         private const long   MinValidBytes  = 3 * 1024 * 1024;
         private const double RefreshHours   = 7.0;
 
-        private static string DbFolder => Path.Combine(AppContext.BaseDirectory, "Redist", "Deps");
+        private static string DbFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamRipApp", "Redist", "Deps");
+        private static string ShippedDbFolder => Path.Combine(AppContext.BaseDirectory, "Redist", "Deps");
 
         public static event Action<string, double>?  ProgressChanged;
 
@@ -287,12 +288,26 @@ namespace SteamRipApp.Core
 
         private static string? FindBaseFile()
         {
-            if (!Directory.Exists(DbFolder)) return null;
-            return Directory
-                .EnumerateFiles(DbFolder, "*.json", SearchOption.TopDirectoryOnly)
-                .Where(f => Path.GetFileName(f).Contains(BaseName, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
-                .FirstOrDefault();
+            if (Directory.Exists(DbFolder))
+            {
+                var localBase = Directory
+                    .EnumerateFiles(DbFolder, "*.json", SearchOption.TopDirectoryOnly)
+                    .Where(f => Path.GetFileName(f).Contains(BaseName, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
+                    .FirstOrDefault();
+                if (localBase != null) return localBase;
+            }
+
+            if (Directory.Exists(ShippedDbFolder))
+            {
+                return Directory
+                    .EnumerateFiles(ShippedDbFolder, "*.json", SearchOption.TopDirectoryOnly)
+                    .Where(f => Path.GetFileName(f).Contains(BaseName, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => File.GetLastWriteTimeUtc(f))
+                    .FirstOrDefault();
+            }
+
+            return null;
         }
 
         private static void RotateBackup(string newlyWrittenPath)
