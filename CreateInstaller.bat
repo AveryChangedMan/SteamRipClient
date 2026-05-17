@@ -75,6 +75,11 @@ if exist "TrustCertificate.bat" (
     echo Bundled: TrustCertificate.bat
 )
 
+if exist "EasyInstaller.bat" (
+    copy /Y "EasyInstaller.bat" "%OUTPUT_DIR%\" >nul
+    echo Bundled: EasyInstaller.bat
+)
+
 echo.
 echo BUILD COMPLETE!
 echo Location: %cd%\%OUTPUT_DIR%
