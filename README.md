@@ -22,7 +22,7 @@ A desktop client for downloading, extracting, and managing local PC games.
 # Images
 
 <img width="1919" height="1027" alt="image" src="https://github.com/user-attachments/assets/7f0385ee-51ef-47d4-9f45-ba8465ba3fb3" />
-<img width="1918" height="1021" alt="image" src="https://github.com/user-attachments/assets/991d5c23-fad4-4e25-a955-718a039aedee" />
+<img width="1919" height="1038" alt="image" src="https://github.com/user-attachments/assets/e181da2e-3919-4c80-9ba7-219541ea7cfc" />
 <img width="1919" height="1029" alt="image" src="https://github.com/user-attachments/assets/48111f5f-f074-4fee-af07-d7b31392e868" />
 <img width="1919" height="1032" alt="image" src="https://github.com/user-attachments/assets/01a922d0-636a-48d4-9bcd-8335f5888481" />
 
