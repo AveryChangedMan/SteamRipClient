@@ -144,7 +144,7 @@ namespace SteamRipApp.Core
                 string args = $"x -y -o+ -p- \"{archivePath}\" \"{outputDir.TrimEnd('\\')}\\\"";
                 Logger.Log($"[Extract] UnRAR CLI command: \"{unrarPath}\" {args}");
 
-                var unrarFileRegex = new Regex(@"^Extracting\s+(.+?)\s+(OK)?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                var unrarFileRegex = new Regex(@"Extracting\s+([^\s]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
                 string _lastFileName = "";
 
                 bool result = await RunProcessWithProgressAsync(unrarPath, args, (pct) => {
@@ -189,17 +189,50 @@ namespace SteamRipApp.Core
 
             var readOutputTask = Task.Run(async () =>
             {
+                var buffer = new char[4096];
+                var sb = new System.Text.StringBuilder();
+
                 while (true)
                 {
                     if (ct.IsCancellationRequested) { try { process.Kill(true); } catch { } break; }
-                    var line = await process.StandardOutput.ReadLineAsync();
-                    if (line == null) break;
 
-                    lineHandler?.Invoke(line);
+                    int read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length);
+                    if (read <= 0) break;
 
-                    var m = ProgressRegex.Match(line);
-                    if (m.Success && double.TryParse(m.Groups[1].Value, out double pct))
-                        onPct(pct);
+                    string chunk = new string(buffer, 0, read);
+                    sb.Append(chunk);
+
+                    string currentText = sb.ToString();
+
+                    var matches = ProgressRegex.Matches(currentText);
+                    if (matches.Count > 0)
+                    {
+                        var lastMatch = matches[matches.Count - 1];
+                        if (double.TryParse(lastMatch.Groups[1].Value, out double pct))
+                        {
+                            onPct(pct);
+                        }
+                    }
+
+                    var lines = currentText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length > 0)
+                    {
+                        foreach (var l in lines)
+                        {
+                            lineHandler?.Invoke(l);
+                        }
+
+                        int lastNewline = currentText.LastIndexOfAny(new[] { '\r', '\n' });
+                        if (lastNewline >= 0 && lastNewline < currentText.Length - 1)
+                        {
+                            sb.Clear();
+                            sb.Append(currentText.Substring(lastNewline + 1));
+                        }
+                        else if (lastNewline >= 0)
+                        {
+                            sb.Clear();
+                        }
+                    }
                 }
             });
 

@@ -1756,10 +1756,10 @@ namespace SteamRipApp.Core
                             {
                                 if (Interlocked.CompareExchange(ref lastUiUpdate, now, last) == last)
                                 {
-                                    double globalPct = (totalSoFar * 100.0) / Math.Max(1, totalDownloadSize);
+                                    double dlPct = (totalSoFar * 85.0) / Math.Max(1, totalDownloadSize);
                                     string progStr = FormatProgressString(totalSoFar, totalDownloadSize);
                                     string fileNameDisplay = chunk.Count > 1 ? $"{chunk.Count} files (merged)" : Path.GetFileName(chunk[0].RelPath);
-                                    onProgress?.Invoke($"{progStr} Restoring {fileNameDisplay}...", globalPct);
+                                    onProgress?.Invoke($"{progStr} Downloading {fileNameDisplay}...", dlPct);
 
                                     if (gf != null)
                                     {
@@ -1767,8 +1767,9 @@ namespace SteamRipApp.Core
                                         {
                                             gf.IsInProgress = true;
                                             gf.IsRepairInterrupted = false;
-                                            gf.ProgressPercentage = globalPct;
+                                            gf.ProgressPercentage = dlPct;
                                             gf.ProgressDetails = $"{progStr}";
+                                            gf.ProgressPhase = "Downloading...";
                                         });
 
                                         if (now - lastDiskUpdate > 2000)
@@ -1779,7 +1780,7 @@ namespace SteamRipApp.Core
                                                     var state = new RepairState {
                                                         TotalBytes = totalDownloadSize,
                                                         DownloadedBytes = totalSoFar,
-                                                        Percentage = globalPct,
+                                                        Percentage = dlPct,
                                                         Status = progStr,
                                                         LastUpdate = DateTime.UtcNow
                                                     };
@@ -1793,7 +1794,9 @@ namespace SteamRipApp.Core
                         }, token);
 
                         extractionStream.Position = 0;
-                        using (var reader = SharpCompress.Readers.Rar.RarReader.Open(extractionStream))
+                        int totalInChunk = chunk.Count;
+                        int extractedCount = 0;
+                        using (var reader = ReaderFactory.OpenReader(extractionStream))
                         {
                             while (reader.MoveToNextEntry())
                             {
@@ -1821,6 +1824,19 @@ namespace SteamRipApp.Core
 
                                     reader.WriteEntryToDirectory(outDir, new SharpCompress.Common.ExtractionOptions { ExtractFullPath = false, Overwrite = true });
                                     Logger.Log($"[Repair] [OK] Restored: {relPath}");
+
+                                    extractedCount++;
+                                    double exPct = 85.0 + (extractedCount * 15.0 / Math.Max(1, totalInChunk));
+                                    onProgress?.Invoke($"Extracting {Path.GetFileName(relPath)} ({extractedCount}/{totalInChunk})...", exPct);
+                                    if (gf != null)
+                                    {
+                                        (Application.Current as App)?.m_window?.DispatcherQueue.TryEnqueue(() =>
+                                        {
+                                            gf.ProgressPercentage = exPct;
+                                            gf.ProgressPhase = "Extracting...";
+                                            gf.ProgressDetails = $"File {extractedCount}/{totalInChunk}";
+                                        });
+                                    }
 
                                     if (skeleton != null)
                                     {
@@ -2252,7 +2268,7 @@ namespace SteamRipApp.Core
                     using (var rarStream = new StitchedRarStream(newUrl, ReadRangeAsync))
                     {
                         rarStream.AddRemote(0, newMap.TotalArchiveSize);
-                        using (var reader = RarReader.Open(rarStream, new ReaderOptions { Password = "steamrip.com" }))
+                        using (var reader = ReaderFactory.OpenReader(rarStream, new ReaderOptions { Password = "steamrip.com" }))
                         {
                             while (reader.MoveToNextEntry())
                             {
@@ -2346,7 +2362,7 @@ namespace SteamRipApp.Core
 
                             extractionStream.Position = 0;
 
-                            using (var reader = RarReader.Open(extractionStream, new ReaderOptions { Password = "steamrip.com" }))
+                            using (var reader = ReaderFactory.OpenReader(extractionStream, new ReaderOptions { Password = "steamrip.com" }))
                             {
                                 if (reader.MoveToNextEntry())
                                 {

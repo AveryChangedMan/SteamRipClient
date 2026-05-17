@@ -64,7 +64,7 @@ namespace RarSurgicalRepair
             using (Stream stream = File.OpenRead(filePath))
             {
 
-                using (var reader = RarReader.Open(stream))
+                using (var reader = ReaderFactory.OpenReader(stream))
                 {
                     while (reader.MoveToNextEntry())
                     {
@@ -88,14 +88,14 @@ namespace RarSurgicalRepair
             using (Stream stream = File.OpenRead(filePath))
             {
 
-                using (var reader = RarReader.Open(stream))
+                using (var reader = ReaderFactory.OpenReader(stream))
                 {
                     while (true)
                     {
                         long headerOffset = stream.Position;
                         if (!reader.MoveToNextEntry()) break;
 
-                        if (reader.Entry.IsDirectory) continue;
+                        if (reader.Entry == null || reader.Entry.IsDirectory) continue;
 
                         long dataOffset = stream.Position;
 
@@ -111,7 +111,7 @@ namespace RarSurgicalRepair
                             DataOffset = dataOffset,
                             CompressedSize = reader.Entry.CompressedSize,
                             UncompressedSize = reader.Entry.Size,
-                            RarVersion = reader.Entry.ToString().Contains("Rar5") ? "RAR5" : "RAR4"
+                            RarVersion = reader.Entry.ToString()?.Contains("Rar5") == true ? "RAR5" : "RAR4"
                         });
                     }
                 }
@@ -157,7 +157,7 @@ namespace RarSurgicalRepair
                     ms.Write(chunkData, 0, chunkData.Length);
                     ms.Position = 0;
 
-                    using (var reader = RarReader.Open(ms))
+                    using (var reader = ReaderFactory.OpenReader(ms))
                     {
                         while (reader.MoveToNextEntry())
                         {

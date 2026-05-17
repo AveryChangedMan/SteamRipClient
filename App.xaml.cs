@@ -57,6 +57,9 @@ namespace SteamRipApp
                 var cmdLine = System.Environment.GetCommandLineArgs();
                 Logger.Log("--- GUI SESSION STARTED ---");
                 GlobalSettings.Load();
+                DiskCacheService.ClearCache();
+
+                _ = Core.GameDatabaseService.InitialiseAsync();
 
                 if (cmdLine.Length > 1 && cmdLine[1].StartsWith("steamrip://"))
                 {

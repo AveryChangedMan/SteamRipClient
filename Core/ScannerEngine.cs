@@ -621,6 +621,9 @@ namespace SteamRipApp.Core
         {
             if (string.IsNullOrEmpty(title)) return title;
 
+            title = System.Net.WebUtility.HtmlDecode(title);
+            title = title.Replace("’", "'").Replace("`", "'").Replace("‘", "'");
+
             string[] clutter = {
                 "Free Download", "SteamRIP.com", "SteamRIP", "Free Pre-installed",
                 "Steam Games", "Free Direct Download", "Build", "Version"

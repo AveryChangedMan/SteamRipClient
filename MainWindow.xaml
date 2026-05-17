@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="SteamRIP Engine v1.5.2.9">
+    Title="SteamRIP Engine v1.6.0.5">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
@@ -202,6 +202,122 @@
                 <Button Content="Cancel" Click="CancelRepairInterceptor_Click" Margin="0,12,0,0"/>
             </StackPanel>
             <WebView2 x:Name="RepairInterceptor" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        </Grid>
+
+        <Grid x:Name="GlobalWindowDimmer" Background="#CC000000" Visibility="Collapsed" Grid.RowSpan="2" Canvas.ZIndex="950"/>
+
+        <Grid x:Name="GlobalGameInfoPopup" Background="{ThemeResource SystemControlBackgroundAltHighBrush}"
+              MaxWidth="800" Margin="24" MaxHeight="750" CornerRadius="12" Visibility="Collapsed" Grid.RowSpan="2" Canvas.ZIndex="1000"
+              HorizontalAlignment="Stretch" VerticalAlignment="Center"
+              BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Grid Height="120" CornerRadius="12,12,0,0">
+                <Grid.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#FF1A1A2E" Offset="0"/>
+                        <GradientStop Color="#FF16213E" Offset="1"/>
+                    </LinearGradientBrush>
+                </Grid.Background>
+                <StackPanel Orientation="Horizontal" Margin="24,0" VerticalAlignment="Center" Spacing="20">
+                    <Border Width="70" Height="95" CornerRadius="8" Background="#20FFFFFF">
+                        <Image x:Name="GlobalPopupHeaderImage" Stretch="UniformToFill"/>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Spacing="4">
+                        <TextBlock x:Name="GlobalPopupTitle" Text="Game Title" FontSize="26" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="600"/>
+                        <TextBlock x:Name="GlobalPopupSubtitle" Text="Version / Tags" FontSize="14" Opacity="0.7" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="600"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Margin="24,20,24,0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
+                <StackPanel Spacing="24">
+
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="📖 About This Game" FontWeight="SemiBold" FontSize="16" Opacity="0.8"/>
+                        <TextBlock x:Name="GlobalPopupGameInfoText" TextWrapping="Wrap" FontSize="13" Opacity="0.9" LineHeight="20"/>
+                    </StackPanel>
+
+                    <Border x:Name="GlobalPopupHowToRunSection" Visibility="Collapsed"
+                            Background="#1A0078D4" BorderBrush="#330078D4"
+                            BorderThickness="1" CornerRadius="8" Padding="16">
+                        <StackPanel Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE73E;" FontSize="18" Foreground="#0078D4"/>
+                                <TextBlock Text="Installation &amp; Launch Notes" FontWeight="Bold" FontSize="16"/>
+                            </StackPanel>
+                            <WebView2 x:Name="GlobalPopupHowToRunWebView" Height="180" HorizontalAlignment="Stretch" DefaultBackgroundColor="Transparent"/>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="📋 Technical Details" FontWeight="SemiBold" FontSize="16" Opacity="0.8"/>
+                        <ItemsControl x:Name="GlobalPopupGameInfoList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Key}" FontWeight="SemiBold" Opacity="0.6" FontSize="13"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="13"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="⚙️ System Requirements" FontWeight="SemiBold" FontSize="16" Opacity="0.8"/>
+                        <ItemsControl x:Name="GlobalPopupRequirementsList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Icon}" FontSize="13" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                        <StackPanel Grid.Column="1" Spacing="2">
+                                            <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="13"/>
+                                            <TextBlock Text="{Binding Value}" TextWrapping="Wrap" FontSize="12" Opacity="0.7"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="2" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" Padding="24,16" CornerRadius="0,0,12,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Click="GlobalPopupOpenBrowser_Click" Background="Transparent" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <SymbolIcon Symbol="World"/>
+                        <TextBlock Text="View Web Page"/>
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="1" Content="Close" Click="GlobalPopupClose_Click" Margin="0,0,12,0" Padding="20,8"/>
+                <Button x:Name="GlobalPopupDownloadBtn" Grid.Column="2" Click="GlobalPopupDownload_Click" Style="{StaticResource AccentButtonStyle}" Padding="24,8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE896;" FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="16"/>
+                        <TextBlock x:Name="GlobalPopupDownloadText" Text="Download Game" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
         </Grid>
 
         <Border x:Name="GlobalProgressOverlay"

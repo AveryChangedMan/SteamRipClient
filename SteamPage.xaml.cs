@@ -219,7 +219,7 @@ namespace SteamRipApp
                     {
                         _ = App.ShowDialogSafeAsync(new ContentDialog {
                             Title = "Game Integrated",
-                            Content = $"'{gf.Title}' has been added to your Steam library with professional artwork.",
+                            Content = $"'{gf.Title}' has been added to your Steam library with official artwork.",
                             CloseButtonText = "OK",
                             XamlRoot = this.XamlRoot
                         });

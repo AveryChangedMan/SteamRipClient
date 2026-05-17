@@ -165,10 +165,6 @@ namespace SteamRipApp.Core
                     SaveManifest();
                 }
 
-                _chunkBytesDownloaded = new long[_manifest.Chunks.Count];
-                for (int i = 0; i < _manifest.Chunks.Count; i++)
-                    _chunkBytesDownloaded[i] = _manifest.Chunks[i].Downloaded;
-
                 var sw = Stopwatch.StartNew();
                 var tasks = new List<Task>();
                 var semaphore = new SemaphoreSlim(ThreadCount);
@@ -178,11 +174,10 @@ namespace SteamRipApp.Core
                     var chunk = _manifest.Chunks[i];
                     if (chunk.Downloaded >= (chunk.End - chunk.Start + 1))
                     {
-
                         continue;
                     }
-                    int idx = i;
-                    tasks.Add(Task.Run(() => DownloadChunkAsync(idx, chunk, semaphore, sw)));
+                    int threadId = i;
+                    tasks.Add(Task.Run(() => DownloadChunkAsync(threadId, chunk, semaphore, sw, tasks)));
                 }
 
                 var progressTask = Task.Run(async () =>
@@ -195,7 +190,11 @@ namespace SteamRipApp.Core
                     while (_state == DownloadState.Downloading || _state == DownloadState.Paused)
                     {
                         await Task.Delay(300);
-                        var totalDownloaded = _chunkBytesDownloaded.Sum();
+                        long totalDownloaded = 0;
+                        lock (_manifest)
+                        {
+                            totalDownloaded = _manifest.Chunks.Sum(c => c.Downloaded);
+                        }
                         var elapsed = sw.Elapsed.TotalSeconds;
                         var delta = totalDownloaded - lastBytes;
                         var dt = elapsed - lastTime;
@@ -248,7 +247,17 @@ namespace SteamRipApp.Core
                     }
                 });
 
-                await Task.WhenAll(tasks);
+                while (true)
+                {
+                    Task[] currentTasks;
+                    lock (tasks) { currentTasks = tasks.ToArray(); }
+                    await Task.WhenAll(currentTasks);
+
+                    bool moreTasks = false;
+                    lock (tasks) { if (tasks.Count > currentTasks.Length) moreTasks = true; }
+                    if (!moreTasks) break;
+                }
+
                 await progressTask;
 
                 if (_state == DownloadState.Cancelled)
@@ -259,12 +268,12 @@ namespace SteamRipApp.Core
 
                 if (_state == DownloadState.Paused)
                 {
-
                     SaveManifest();
                     return;
                 }
 
-                var totalDone = _chunkBytesDownloaded.Sum();
+                long totalDone = 0;
+                lock (_manifest) { totalDone = _manifest.Chunks.Sum(c => c.Downloaded); }
                 if (totalDone >= _manifest.TotalBytes)
                 {
                     _state = DownloadState.Completed;
@@ -291,20 +300,19 @@ namespace SteamRipApp.Core
             }
         }
 
-        private async Task DownloadChunkAsync(int index, ChunkState chunk, SemaphoreSlim sem, Stopwatch sw)
+        private async Task DownloadChunkAsync(int threadId, ChunkState chunk, SemaphoreSlim sem, Stopwatch sw, List<Task> tasks)
         {
             await sem.WaitAsync(_cts.Token);
             try
             {
                 while (true)
                 {
-                    var chunkSize = chunk.End - chunk.Start + 1;
-                    var startPos = chunk.Start + chunk.Downloaded;
-                    var remaining = chunkSize - chunk.Downloaded;
+                    long startPos = chunk.Start + chunk.Downloaded;
+                    long remaining = chunk.End - startPos + 1;
 
                     if (remaining <= 0) break;
 
-                    Logger.Log($"[Downloader][T{index}] Starting/Resuming chunk {startPos}-{chunk.End} ({remaining} bytes remaining)");
+                    Logger.Log($"[Downloader][T{threadId}] Starting/Resuming chunk {startPos}-{chunk.End} ({remaining} bytes remaining)");
 
                     try
                     {
@@ -324,7 +332,7 @@ namespace SteamRipApp.Core
 
                             if (isForbidden || isTimeout)
                             {
-                                Logger.Log($"[Downloader][T{index}] Connection issue (Forbidden={isForbidden}, Timeout={isTimeout}). Attempting renewal...");
+                                Logger.Log($"[Downloader][T{threadId}] Connection issue (Forbidden={isForbidden}, Timeout={isTimeout}). Attempting renewal...");
 
                                 if (LinkExpired != null && !string.IsNullOrEmpty(BuzzheavierPageUrl))
                                 {
@@ -345,7 +353,7 @@ namespace SteamRipApp.Core
 
                         if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.PartialContent)
                         {
-                            Logger.Log($"[Downloader][T{index}] Error: {response.StatusCode}");
+                            Logger.Log($"[Downloader][T{threadId}] Error: {response.StatusCode}");
                             if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                             {
                                 throw new HttpRequestException("Forbidden", null, System.Net.HttpStatusCode.Forbidden);
@@ -362,12 +370,18 @@ namespace SteamRipApp.Core
                         {
                             _pauseEvent.Wait(_cts.Token);
 
+                            long currentPos = chunk.Start + chunk.Downloaded;
+                            if (currentPos > chunk.End) break;
+
+                            int maxToRead = (int)Math.Min(buffer.Length, chunk.End - currentPos + 1);
+                            if (maxToRead <= 0) break;
+
                             var readCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                             readCts.CancelAfter(TimeSpan.FromSeconds(15));
 
                             int bytesRead = 0;
                             try {
-                                bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, readCts.Token);
+                                bytesRead = await stream.ReadAsync(buffer, 0, maxToRead, readCts.Token);
                             } catch (OperationCanceledException) when (!_cts.IsCancellationRequested) {
                                 throw new TimeoutException("Read timeout");
                             }
@@ -376,31 +390,67 @@ namespace SteamRipApp.Core
 
                             fs.Write(buffer, 0, bytesRead);
                             chunk.Downloaded += bytesRead;
-                            Interlocked.Add(ref _chunkBytesDownloaded[index], bytesRead);
 
                             if (chunk.Downloaded % (1024 * 1024 * 100) == 0) SaveManifest();
                         }
 
-                        if (chunk.Downloaded >= chunkSize) break;
+                        if (chunk.Start + chunk.Downloaded > chunk.End) break;
                     }
                     catch (OperationCanceledException)
                     {
-                        Logger.Log($"[Downloader][T{index}] Cancelled.");
+                        Logger.Log($"[Downloader][T{threadId}] Cancelled.");
                         return;
                     }
                     catch (Exception ex)
                     {
-                        Logger.LogError($"[Downloader][T{index}] Chunk error", ex);
-                        Logger.Log($"[Downloader][T{index}] Retrying chunk in 5s...");
+                        Logger.LogError($"[Downloader][T{threadId}] Chunk error", ex);
+                        Logger.Log($"[Downloader][T{threadId}] Retrying chunk in 5s...");
                         await Task.Delay(5000, _cts.Token);
                     }
                 }
 
-                Logger.Log($"[Downloader][T{index}] Chunk complete. Downloaded {chunk.Downloaded} bytes.");
+                Logger.Log($"[Downloader][T{threadId}] Chunk complete. Downloaded {chunk.Downloaded} bytes.");
+
+                ChunkState? stolenChunk = null;
+                if (_manifest != null)
+                {
+                    lock (_manifest)
+                    {
+                        if (_state == DownloadState.Downloading && !_cts.IsCancellationRequested)
+                        {
+
+                            var largestChunk = _manifest.Chunks
+                                .Where(c => (c.End - (c.Start + c.Downloaded)) > 20 * 1024 * 1024)
+                                .OrderByDescending(c => c.End - (c.Start + c.Downloaded))
+                                .FirstOrDefault();
+
+                            if (largestChunk != null)
+                            {
+                                long rem = largestChunk.End - (largestChunk.Start + largestChunk.Downloaded);
+                                long splitPos = largestChunk.Start + largestChunk.Downloaded + (rem / 2);
+
+                                var newChunk = new ChunkState { Start = splitPos, End = largestChunk.End, Downloaded = 0 };
+                                largestChunk.End = splitPos - 1;
+
+                                _manifest.Chunks.Add(newChunk);
+                                stolenChunk = newChunk;
+                                SaveManifest();
+                                Logger.Log($"[Downloader][T{threadId}] Work Stealing: Split chunk. New chunk {newChunk.Start}-{newChunk.End}.");
+                            }
+                        }
+                    }
+                }
+
+                if (stolenChunk != null)
+                {
+                    int newThreadId = threadId;
+                    var newTask = Task.Run(() => DownloadChunkAsync(newThreadId, stolenChunk, sem, sw, tasks));
+                    lock (tasks) { tasks.Add(newTask); }
+                }
             }
             catch (OperationCanceledException)
             {
-                Logger.Log($"[Downloader][T{index}] Task Cancelled.");
+                Logger.Log($"[Downloader][T{threadId}] Task Cancelled.");
             }
             finally
             {

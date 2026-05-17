@@ -5,13 +5,24 @@ using SteamRipApp.Core;
 using System;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace SteamRipApp
 {
+    public class InfoItem { public string Key { get; set; } = ""; public string Value { get; set; } = ""; }
+    public class ReqItem {
+        public string Icon { get; set; } = "";
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+        public int RankDiff { get; set; } = 0;
+        public bool HasRankDiff { get => RankDiff != 0; }
+        public string RankText { get => RankDiff > 0 ? $"+{RankDiff} ranks above req" : $"{RankDiff} ranks below req"; }
+    }
+
     public sealed partial class HomePage : Page
     {
-        public ObservableCollection<SearchResult> Results { get; } = new ObservableCollection<SearchResult>();
+        public ObservableCollection<GameGroup> Groups { get; } = new ObservableCollection<GameGroup>();
         private TaskCompletionSource<string>? _downloadUrlTcs;
         private bool _interceptorReady = false;
 
@@ -23,6 +34,12 @@ namespace SteamRipApp
 
         private void OnPageLoaded(object sender, RoutedEventArgs e)
         {
+            ResultsGrid.ItemsSource = Groups;
+            if (Groups.Count == 0)
+            {
+                _ = LoadGamesListFromUrlAsync("https://steamrip.com/");
+            }
+
         }
 
         private async void SearchBtn_Click(object sender, RoutedEventArgs e)
@@ -35,48 +52,166 @@ namespace SteamRipApp
             await RunSearch(args.QueryText);
         }
 
-        private async Task RunSearch(string query)
+        private string _lastSearchQuery = "";
+        private string _lastUrl = "";
+        private bool _isSearch = false;
+        private int _currentRequestId = 0;
+
+        private async Task RunSearch(string query, int page = 1)
         {
             if (string.IsNullOrWhiteSpace(query)) return;
+            int reqId = ++_currentRequestId;
             try {
+                _isSearch = true;
+                _lastSearchQuery = query;
                 LoadingRing.IsActive = true;
-                Results.Clear();
 
-                var searchResults = await SteamRipScraper.SearchAsync(query);
-                foreach (var res in searchResults) Results.Add(res);
-                ResultsGrid.ItemsSource = Results;
+                var searchResultPage = await SteamRipScraper.SearchPageAsync(query, page);
+                if (reqId != _currentRequestId) return;
 
-                _ = Task.Run(async () => {
-                    try {
-                        foreach (var item in searchResults)
-                        {
-
-                            var bzTask = SteamRipScraper.CheckBuzzheavierAsync(item.Url);
-                            var gfTask = SteamRipScraper.CheckGoFileAsync(item.Url);
-                            await Task.WhenAll(bzTask, gfTask);
-
-                            var (bzFound, bzUrl) = await bzTask;
-                            var (gfFound, gfPageUrl, gfDirectLinks) = await gfTask;
-
-                            this.DispatcherQueue?.TryEnqueue(() => {
-                                item.BuzzheavierUrl = bzUrl;
-                                item.IsBuzzheavierAvailable = bzFound;
-
-                                if (bzUrl.Contains("vikingfile") || bzUrl.Contains("vik1ngfile"))
-                                {
-                                    item.DownloadStatus = "Viking File Ready";
-                                }
-                            });
-                        }
-                    } catch (Exception ex) {
-                        Logger.LogError("HomeBackgroundCheck", ex);
-                    }
-                });
+                Groups.Clear();
+                await ProcessSearchResultsAsync(searchResultPage);
             } catch (Exception ex) {
                 Logger.LogError("HomeUI", ex);
             } finally {
-                LoadingRing.IsActive = false;
+                if (reqId == _currentRequestId) LoadingRing.IsActive = false;
             }
+        }
+
+        private async void NavHome_Click(object sender, RoutedEventArgs e) => await LoadGamesListFromUrlAsync("https://steamrip.com/");
+
+        private async void NavCategory_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem item && item.Tag is string category)
+                await LoadGamesListFromUrlAsync($"https://steamrip.com/category/{category}/");
+        }
+
+        private async void NavTopGames_Click(object sender, RoutedEventArgs e) => await LoadGamesListFromUrlAsync("https://steamrip.com/top-games/");
+
+        private void NavFaq_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem item && item.Tag is string tag)
+            {
+                var url = tag == "how-to-run-games" ? "https://steamrip.com/how-to-run-games/" : "https://steamrip.com/faq/";
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            }
+        }
+
+        private void NavDiscord_Click(object sender, RoutedEventArgs e)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.com/invite/steamrip") { UseShellExecute = true });
+        }
+
+        private async Task LoadGamesListFromUrlAsync(string url, int page = 1)
+        {
+            int reqId = ++_currentRequestId;
+            try {
+                _isSearch = false;
+                _lastUrl = url;
+                LoadingRing.IsActive = true;
+                SearchBox.Text = "";
+
+                string urlToFetch = url;
+                if (page > 1) {
+                    urlToFetch = url.TrimEnd('/') + $"/page/{page}/";
+                }
+
+                var searchResultPage = await SteamRipScraper.GetGamesPageAsync(urlToFetch);
+                if (reqId != _currentRequestId) return;
+
+                Groups.Clear();
+                await ProcessSearchResultsAsync(searchResultPage);
+            } catch (Exception ex) {
+                Logger.LogError("HomeLoadList", ex);
+            } finally {
+                if (reqId == _currentRequestId) LoadingRing.IsActive = false;
+            }
+        }
+
+        private void UpdatePaginationUI(int current, int total)
+        {
+            PaginationPanel.Children.Clear();
+            if (total <= 1) return;
+
+            var pages = new System.Collections.Generic.List<int?>();
+            pages.Add(1);
+
+            if (total <= 7)
+            {
+                for (int i = 2; i <= total; i++) pages.Add(i);
+            }
+            else
+            {
+                int start = Math.Max(2, current - 2);
+                int end = Math.Min(total - 1, current + 2);
+
+                if (start == 2) end = Math.Min(total - 1, 6);
+                if (end == total - 1) start = Math.Max(2, total - 5);
+
+                if (start > 2) pages.Add(null);
+
+                for (int i = start; i <= end; i++)
+                {
+                    pages.Add(i);
+                }
+
+                if (end < total - 1) pages.Add(null);
+                pages.Add(total);
+            }
+
+            foreach (var p in pages)
+            {
+                if (p == null)
+                {
+                    var text = new TextBlock { Text = "...", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4,0,4,0) };
+                    PaginationPanel.Children.Add(text);
+                }
+                else
+                {
+                    var btn = new Button { Content = p.ToString(), Margin = new Thickness(2,0,2,0) };
+                    if (p == current)
+                    {
+                        btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                        btn.IsEnabled = false;
+                    }
+                    int targetPage = p.Value;
+                    btn.Click += async (s, e) => {
+                        if (_isSearch) await RunSearch(_lastSearchQuery, targetPage);
+                        else await LoadGamesListFromUrlAsync(_lastUrl, targetPage);
+                    };
+                    PaginationPanel.Children.Add(btn);
+                }
+            }
+        }
+
+        private async Task ProcessSearchResultsAsync(SearchResultPage searchResultPage)
+        {
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var cleanGroups = new System.Collections.Generic.List<GameGroup>();
+
+            foreach (var g in searchResultPage.Groups)
+            {
+                var cleanGroup = new GameGroup { Title = g.Title };
+                foreach (var game in g.Games)
+                {
+                    if (seenUrls.Add(game.Url))
+                    {
+                        game.CheckInstalledState();
+                        cleanGroup.Games.Add(game);
+                    }
+                }
+                if (cleanGroup.Games.Count > 0)
+                {
+                    cleanGroups.Add(cleanGroup);
+                }
+            }
+
+            foreach (var cg in cleanGroups)
+            {
+                Groups.Add(cg);
+            }
+
+            UpdatePaginationUI(searchResultPage.CurrentPage, searchResultPage.TotalPages);
         }
 
         private async void QuickDownload_Click(object sender, RoutedEventArgs e)
@@ -84,6 +219,42 @@ namespace SteamRipApp
             if (sender is not Button btn) return;
             var item = btn.DataContext as SearchResult;
             if (item == null || item.IsDownloading) return;
+
+            item.CheckInstalledState();
+            if (!string.IsNullOrEmpty(item.InstalledPath) && Directory.Exists(item.InstalledPath))
+            {
+                var repairDialog = new ContentDialog
+                {
+                    Title = "Game Already Installed",
+                    Content = "This game is already installed on your PC.\n\nInstead of re-downloading the entire game from scratch, you can use the Repair option in your Library to verify and fix any corrupted or missing files much faster.\n\nWould you like to continue re-installing anyway? (This will delete your existing game folder and re-download it).",
+                    PrimaryButtonText = "Continue Anyway",
+                    SecondaryButtonText = "Cancel (Use Repair)",
+                    DefaultButton = ContentDialogButton.Secondary,
+                    XamlRoot = this.XamlRoot
+                };
+
+                var result = await App.ShowDialogSafeAsync(repairDialog);
+                if (result != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                try {
+                    Logger.Log($"[QuickDownload] Deleting existing game folder for re-install: {item.InstalledPath}");
+                    RepairService.StopHashingForGame(item.InstalledPath);
+                    var pathToDelete = item.InstalledPath;
+                    await Task.Run(() => {
+                        if (Directory.Exists(pathToDelete))
+                            Directory.Delete(pathToDelete, recursive: true);
+                    });
+                    var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(pathToDelete, StringComparison.OrdinalIgnoreCase));
+                    if (meta != null) GlobalSettings.Library.Remove(meta);
+                    GlobalSettings.GamePageLinks.Remove(pathToDelete);
+                    GlobalSettings.Save();
+                } catch (Exception ex) {
+                    Logger.LogError("ReInstallDelete", ex);
+                }
+            }
 
             GlobalTask? task = null;
             try {
@@ -639,58 +810,157 @@ namespace SteamRipApp
             _downloadUrlTcs?.TrySetResult(url);
         }
 
+        private async Task EnsureWebViewReady(WebView2 wv)
+        {
+            try {
+                if (wv.CoreWebView2 == null)
+                {
+                    await wv.EnsureCoreWebView2Async();
+                }
+            } catch (Exception ex) {
+                Logger.Log($"[WebView] Initialization failed: {ex.Message}");
+            }
+        }
+
+        private async void ShowNote_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.DataContext is SearchResult item)
+            {
+                if (string.IsNullOrEmpty(item.NoteContent)) return;
+
+                var html = $@"<html><head><style>
+                    body {{ font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: #1a1a2e; padding: 16px; margin: 0; }}
+                    strong {{ color: #4facfe; }}
+                    ul {{ padding-left: 20px; }}
+                    li {{ margin-bottom: 8px; }}
+                </style></head><body>{item.NoteContent}</body></html>";
+
+                var wv = new WebView2 { Height = 400, Width = 500 };
+
+                var dialog = new ContentDialog {
+                    Title = "How to Run: " + item.Title,
+                    Content = wv,
+                    CloseButtonText = "Close",
+                    XamlRoot = this.XamlRoot
+                };
+
+                var dialogTask = App.ShowDialogSafeAsync(dialog);
+
+                await EnsureWebViewReady(wv);
+                if (wv.CoreWebView2 != null) wv.NavigateToString(html);
+
+                await dialogTask;
+            }
+        }
+
         private async void Preview_Click(object sender, RoutedEventArgs e)
         {
+            SearchResult? searchItem = null;
             string? url = null;
+
             if (sender is Button btn)
-                url = (btn.DataContext as SearchResult)?.Url ?? btn.Tag as string;
+            {
+                searchItem = btn.DataContext as SearchResult;
+                url = searchItem?.Url ?? btn.Tag as string;
+            }
+
             if (string.IsNullOrEmpty(url)) return;
 
             PropertiesOverlayDimmer.Visibility = Visibility.Visible;
             PropertiesDialog.Visibility = Visibility.Visible;
             RequirementsLoading.IsActive = true;
-            RequirementsList.Children.Clear();
-            GameInfoList.Children.Clear();
+
+            PropsTitle.Text = searchItem?.Title ?? "Game Properties";
+            try {
+                if (searchItem != null && !string.IsNullOrEmpty(searchItem.ImageUrl) && Uri.TryCreate(searchItem.ImageUrl, UriKind.Absolute, out Uri? imgUri))
+                {
+                    PropsHeaderImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(imgUri);
+                }
+            } catch {  }
+
+            GameInfoList.ItemsSource = null;
+            RequirementsList.ItemsSource = null;
 
             try {
                 try {
-                    LiveChatWebView.Source = new Uri(url);
+                    if (Uri.TryCreate(url, UriKind.Absolute, out Uri? webUri))
+                        LiveChatWebView.Source = webUri;
                 } catch (Exception ex) {
                     Logger.Log($"[Home] WebView2 navigation failed: {ex.Message}");
                 }
                 var details = await SteamRipScraper.GetGameDetailsAsync(url);
-
-                foreach (var info in details.GameInfo)
-                {
-                    var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 0, 2) };
-                    panel.Children.Add(new TextBlock {
-                        Text = info.Key + ":",
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                        Width = 100,
-                        TextWrapping = TextWrapping.NoWrap,
-                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue)
-                    });
-                    panel.Children.Add(new TextBlock { Text = info.Value, TextWrapping = TextWrapping.Wrap });
-                    GameInfoList.Children.Add(panel);
+                if (details == null) {
+                    Logger.Log("[Home] Failed to load game details.");
+                    return;
                 }
 
+                if (!string.IsNullOrEmpty(details.HowToRunNote))
+                {
+                    HowToRunSection.Visibility = Visibility.Visible;
+                    var html = $@"<html><head><style>
+                        body {{ font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: transparent; padding: 0; margin: 0; overflow-x: hidden; }}
+                        strong {{ color: #4facfe; }}
+                        ul {{ padding-left: 20px; }}
+                        li {{ margin-bottom: 8px; }}
+                    </style></head><body>{details.HowToRunNote}</body></html>";
+
+                    try {
+                        await EnsureWebViewReady(HowToRunWebView);
+                        if (HowToRunWebView.CoreWebView2 != null)
+                            HowToRunWebView.NavigateToString(html);
+                    } catch (Exception ex) { Logger.Log($"[Home] Inline WebView2 fail: {ex.Message}"); }
+                }
+                else
+                {
+                    HowToRunSection.Visibility = Visibility.Collapsed;
+                }
+
+                var infoItems = new System.Collections.Generic.List<InfoItem>();
+                foreach (var info in details.GameInfo)
+                {
+                    infoItems.Add(new InfoItem { Key = info.Key, Value = info.Value });
+                }
+                GameInfoList.ItemsSource = infoItems;
+
                 var localSpecs = HardwareSpecsEngine.GetLocalSpecs();
+                var reqItems = new System.Collections.Generic.List<ReqItem>();
                 foreach (var req in details.SystemRequirements)
                 {
                     var result = HardwareSpecsEngine.EvaluateRequirement(req.Key, req.Value, localSpecs,
                         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"));
-                    var icon = result == true ? "✅" : (result == false ? "❌" : "➖");
-                    var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                    panel.Children.Add(new TextBlock { Text = icon, Width = 20 });
-                    panel.Children.Add(new TextBlock { Text = req.Key + ":", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Width = 90 });
-                    panel.Children.Add(new TextBlock { Text = req.Value, TextWrapping = TextWrapping.Wrap });
-                    RequirementsList.Children.Add(panel);
+                    var icon = result == true ? "✅" : "➖";
+
+                    int diff = HardwareSpecsEngine.GetRankDiff(req.Key, req.Value, localSpecs);
+
+                    reqItems.Add(new ReqItem {
+                        Icon = icon,
+                        Key = req.Key,
+                        Value = req.Value,
+                        RankDiff = diff
+                    });
                 }
+                RequirementsList.ItemsSource = reqItems;
+
             } catch (Exception ex) {
                 Logger.LogError("PreviewUI", ex);
             } finally {
                 RequirementsLoading.IsActive = false;
             }
+        }
+
+        private void OpenInBrowser_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (LiveChatWebView.Source != null)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = LiveChatWebView.Source.ToString(),
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex) { Logger.LogError("OpenBrowser", ex); }
         }
 
         private async void LiveChatWebView_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
@@ -766,6 +1036,47 @@ namespace SteamRipApp
             await App.ShowDialogSafeAsync(dialog);
             GlobalSettings.LastSpaceWarningTime = DateTime.Now;
             GlobalSettings.Save();
+        }
+
+        private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+        {
+            if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)
+            {
+                var suggestions = Core.JsonGameEntry.Search(sender.Text);
+                sender.ItemsSource = suggestions.Count > 0 ? (object)suggestions : null;
+            }
+        }
+
+        private object? _currentPopupGame = null;
+
+        private void SearchBox_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+        {
+            if (args.SelectedItem is Core.JsonGameEntry jsonGame)
+            {
+                sender.Text = jsonGame.name;
+                _currentPopupGame = jsonGame;
+                ShowGameInfoPopup(jsonGame);
+                _ = RunSearch(jsonGame.name);
+            }
+        }
+
+        private void CoverImage_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.DataContext is SearchResult searchResult)
+            {
+                ShowGameInfoPopup(searchResult);
+            }
+        }
+
+        private void ShowGameInfoPopup(object gameObj)
+        {
+            if (App.MainWindowInstance as MainWindow is MainWindow mw)
+            {
+                mw.ShowGameInfoPopup(gameObj, res => {
+                    var dummyButton = new Button { DataContext = res };
+                    QuickDownload_Click(dummyButton, new RoutedEventArgs());
+                });
+            }
         }
     }
 }

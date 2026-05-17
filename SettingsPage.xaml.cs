@@ -4,6 +4,7 @@ using SteamRipApp.Core;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
@@ -20,6 +21,105 @@ namespace SteamRipApp
             this.InitializeComponent();
             LoadSettings();
             _isLoading = false;
+
+            GameDatabaseService.ProgressChanged += OnDbProgress;
+            GameDatabaseService.DatabaseSwapped += OnDatabaseSwapped;
+            UpdateDbStatus();
+            UpdateDbChangesButton();
+        }
+
+        private void UpdateDbStatus()
+        {
+            bool hasFile = !string.IsNullOrEmpty(GameDatabaseService.ActiveFilePath);
+            if (hasFile)
+            {
+                bool isBase = GameDatabaseService.IsBaseFile;
+                string age  = GameDatabaseService.ActiveFileAge == DateTime.MinValue
+                    ? "unknown age"
+                    : $"{(DateTime.UtcNow - GameDatabaseService.ActiveFileAge).TotalHours:F1} h old";
+
+                string lastStatus = GameDatabaseService.LastRefreshStatus;
+                if (lastStatus.Contains("cancelled", StringComparison.OrdinalIgnoreCase))
+                {
+                    DbStatusLabel.Text = "⚠️ Refresh cancelled — existing database still active.";
+                }
+                else if (lastStatus.Contains("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    DbStatusLabel.Text = $"❌ {lastStatus}";
+                }
+                else
+                {
+                    DbStatusLabel.Text = isBase
+                        ? $"✅ BASE database loaded ({age})"
+                        : $"✅ Fresh database loaded ({age})";
+                }
+
+                DbFileLabel.Text = Path.GetFileName(GameDatabaseService.ActiveFilePath)
+                    + $"  ·  {GameDatabaseService.Games?.Count ?? 0} games";
+            }
+            else
+            {
+                DbStatusLabel.Text = "⚠️ No database found";
+                DbFileLabel.Text   = "A refresh will download the full game list.";
+            }
+
+            bool running = GameDatabaseService.IsRunning;
+            DbRefreshBtn.IsEnabled     = !running;
+            DbCancelBtn.Visibility     = running ? Visibility.Visible : Visibility.Collapsed;
+            DbProgressPanel.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UpdateDbChangesButton()
+        {
+            var diff = GameDatabaseService.LastDiff;
+            if (diff == null || !diff.HasChanges)
+            {
+                DbViewChangesBtn.Visibility = Visibility.Collapsed;
+                return;
+            }
+            DbViewChangesBtn.Visibility = Visibility.Visible;
+            DbViewChangesBtnLabel.Text =
+                $"View Changes  (+{diff.Added.Count} / -{diff.Removed.Count} / 🔄 {diff.Modified.Count})";
+        }
+
+        private void OnDatabaseSwapped(Core.DatabaseDiff diff)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateDbStatus();
+                UpdateDbChangesButton();
+            });
+        }
+
+        private void OnDbProgress(string message, double pct)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (pct < 0)
+                {
+                    UpdateDbStatus();
+                    return;
+                }
+
+                DbProgressBar.Value   = pct;
+                DbProgressLabel.Text  = message;
+
+                bool running = GameDatabaseService.IsRunning;
+                DbRefreshBtn.IsEnabled  = !running;
+                DbCancelBtn.Visibility  = running ? Visibility.Visible : Visibility.Collapsed;
+                DbProgressPanel.Visibility = Visibility.Visible;
+
+                if (!running || pct >= 100)
+                {
+
+                    UpdateDbStatus();
+                    if (pct >= 100)
+                    {
+                        DbProgressPanel.Visibility = Visibility.Collapsed;
+                        DbCancelBtn.Visibility = Visibility.Collapsed;
+                    }
+                }
+            });
         }
 
         private void LoadSettings()
@@ -144,11 +244,7 @@ namespace SteamRipApp
             if (sender is Button btn)
             {
                 btn.IsEnabled = false;
-
-                await Task.Run(async () => {
-                    await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories);
-                });
-
+                await Task.Run(async () => { await ScannerEngine.ScanDirectoriesAsync(GlobalSettings.ScanDirectories); });
                 btn.IsEnabled = true;
             }
             ContentDialog dialog = new ContentDialog
@@ -158,6 +254,139 @@ namespace SteamRipApp
                 CloseButtonText = "OK",
                 XamlRoot = this.XamlRoot
             };
+            await App.ShowDialogSafeAsync(dialog);
+        }
+
+        private async void DbRefreshBtn_Click(object sender, RoutedEventArgs e)
+        {
+            DbRefreshBtn.IsEnabled     = false;
+            DbCancelBtn.Visibility     = Visibility.Visible;
+            DbProgressPanel.Visibility = Visibility.Visible;
+            DbProgressBar.Value        = 0;
+            DbProgressLabel.Text       = "Starting…";
+            DbStatusLabel.Text         = "🔄 Refreshing database…";
+
+            await Task.Run(() => GameDatabaseService.RefreshNowAsync());
+
+            UpdateDbStatus();
+        }
+
+        private void DbCancelBtn_Click(object sender, RoutedEventArgs e)
+        {
+            GameDatabaseService.CancelRefresh();
+            DbCancelBtn.Visibility     = Visibility.Collapsed;
+            DbProgressPanel.Visibility = Visibility.Collapsed;
+            DbRefreshBtn.IsEnabled     = true;
+            DbStatusLabel.Text         = "⚠️ Refresh cancelled — existing database still active.";
+        }
+
+        private async void DbViewChangesBtn_Click(object sender, RoutedEventArgs e)
+        {
+            var diff = GameDatabaseService.LastDiff;
+            if (diff == null) return;
+
+            var grid = new Grid { ColumnSpacing = 16 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var addedPanel = new StackPanel { Spacing = 4 };
+            addedPanel.Children.Add(new TextBlock
+            {
+                Text       = $"✅ Added ({diff.Added.Count})",
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                Margin     = new Thickness(0, 0, 0, 8)
+            });
+            foreach (var link in diff.Added)
+            {
+                string slug = link.TrimEnd('/').Split('/').LastOrDefault() ?? link;
+                slug = slug.Replace("-free-download", "", StringComparison.OrdinalIgnoreCase)
+                           .Replace("-", " ");
+                addedPanel.Children.Add(new TextBlock
+                {
+                    Text         = slug,
+                    FontSize     = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
+                });
+            }
+            if (diff.Added.Count == 0)
+                addedPanel.Children.Add(new TextBlock { Text = "(none)", Opacity = 0.5, FontSize = 12 });
+
+            var removedPanel = new StackPanel { Spacing = 4 };
+            removedPanel.Children.Add(new TextBlock
+            {
+                Text       = $"❌ Removed ({diff.Removed.Count})",
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                Margin     = new Thickness(0, 0, 0, 8)
+            });
+            foreach (var link in diff.Removed)
+            {
+                string slug = link.TrimEnd('/').Split('/').LastOrDefault() ?? link;
+                slug = slug.Replace("-free-download", "", StringComparison.OrdinalIgnoreCase)
+                           .Replace("-", " ");
+                removedPanel.Children.Add(new TextBlock
+                {
+                    Text         = slug,
+                    FontSize     = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
+                });
+            }
+            if (diff.Removed.Count == 0)
+                removedPanel.Children.Add(new TextBlock { Text = "(none)", Opacity = 0.5, FontSize = 12 });
+
+            var modifiedPanel = new StackPanel { Spacing = 4 };
+            modifiedPanel.Children.Add(new TextBlock
+            {
+                Text       = $"🔄 Modified ({diff.Modified.Count})",
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                Margin     = new Thickness(0, 0, 0, 8)
+            });
+            foreach (var mod in diff.Modified)
+            {
+                var textBlock = new TextBlock
+                {
+                    Text         = mod.GameName,
+                    FontSize     = 12,
+                    TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap
+                };
+                ToolTipService.SetToolTip(textBlock, $"{mod.OldLink}\n↓\n{mod.NewLink}");
+                modifiedPanel.Children.Add(textBlock);
+            }
+            if (diff.Modified.Count == 0)
+                modifiedPanel.Children.Add(new TextBlock { Text = "(none)", Opacity = 0.5, FontSize = 12 });
+
+            var addedScroll    = new ScrollViewer { Content = addedPanel,    MaxHeight = 400, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            var removedScroll  = new ScrollViewer { Content = removedPanel,  MaxHeight = 400, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+            var modifiedScroll = new ScrollViewer { Content = modifiedPanel, MaxHeight = 400, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+
+            Grid.SetColumn(addedScroll,    0);
+            Grid.SetColumn(removedScroll,  1);
+            Grid.SetColumn(modifiedScroll, 2);
+            grid.Children.Add(addedScroll);
+            grid.Children.Add(removedScroll);
+            grid.Children.Add(modifiedScroll);
+
+            string subtitle = $"{diff.PreviousFile}  →  {diff.NewFile}\n"
+                            + $"Computed {diff.ComputedAt.ToLocalTime():yyyy-MM-dd HH:mm}";
+
+            var dialog = new ContentDialog
+            {
+                Title          = "Database Changes",
+                Content        = new StackPanel
+                {
+                    Spacing  = 12,
+                    Children =
+                    {
+                        new TextBlock { Text = subtitle, FontSize = 11, Opacity = 0.6, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                        grid
+                    }
+                },
+                CloseButtonText = "Close",
+                DefaultButton   = ContentDialogButton.Close,
+                XamlRoot        = this.XamlRoot,
+                MinWidth        = 800
+            };
+
             await App.ShowDialogSafeAsync(dialog);
         }
         private void AdvancedModeToggle_Toggled(object sender, RoutedEventArgs e)

@@ -228,6 +228,12 @@ namespace SteamRipApp
                             });
                         }
 
+                        if (!string.IsNullOrEmpty(game.Url))
+                        {
+                            string norm = game.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                            GlobalSettings.GamePageLinks[norm] = game.Url;
+                        }
+
                         if (existingGames.TryGetValue(game.RootPath, out var existing))
                         {
 
@@ -364,6 +370,7 @@ namespace SteamRipApp
                     Logger.Log($"[CRITICAL] FormatException caught in RefreshLibrary. StackTrace: {ex.StackTrace}");
                 }
             } finally {
+                GlobalSettings.Save();
                 LoadingRing.IsActive = false;
                 RefreshBtn.IsEnabled = true;
                 _isRefreshing = false;
@@ -405,18 +412,27 @@ namespace SteamRipApp
                 PropertiesOverlayDimmer.Visibility = Visibility.Visible;
                 PropertiesDialog.Visibility = Visibility.Visible;
                 RequirementsLoading.IsActive = true;
-                RequirementsList.Children.Clear();
-                GameInfoList.Children.Clear();
 
-                var infoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                infoPanel.Children.Add(new TextBlock {
-                    Text = "Installed",
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Width = 110,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue)
-                });
-                infoPanel.Children.Add(new TextBlock { Text = !string.IsNullOrEmpty(gf.Version) ? gf.Version : "Unknown" });
-                GameInfoList.Children.Add(infoPanel);
+                PropsTitle.Text = gf.Title;
+                PropsSubtitle.Text = !string.IsNullOrEmpty(gf.DisplayVersion) ? $"Installed Version: {gf.DisplayVersion}" : "SteamRIP Installed Game";
+
+                try {
+                    if (!string.IsNullOrEmpty(gf.ImageUrl) && Uri.TryCreate(gf.ImageUrl, UriKind.Absolute, out Uri? imgUri))
+                    {
+                        PropsHeaderImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(imgUri);
+                    }
+                    else if (!string.IsNullOrEmpty(gf.LocalImagePath) && File.Exists(gf.LocalImagePath))
+                    {
+                        PropsHeaderImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(gf.LocalImagePath));
+                    }
+                } catch { }
+
+                GameInfoList.ItemsSource = null;
+                RequirementsList.ItemsSource = null;
+
+                var infoItems = new System.Collections.Generic.List<InfoItem>();
+                infoItems.Add(new InfoItem { Key = "Installed Path", Value = gf.RootPath });
+                infoItems.Add(new InfoItem { Key = "Installed Version", Value = !string.IsNullOrEmpty(gf.Version) ? gf.Version : "Unknown" });
 
                 if (!string.IsNullOrEmpty(gf.Url) && gf.Url.StartsWith("http"))
                 {
@@ -427,29 +443,48 @@ namespace SteamRipApp
                     }
                     try {
                         var details = await SteamRipScraper.GetGameDetailsAsync(gf.Url);
-                        foreach (var info in details.GameInfo)
+                        if (details != null)
                         {
-                            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                            panel.Children.Add(new TextBlock {
-                                Text = info.Key,
-                                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                                Width = 110,
-                                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue)
-                            });
-                            panel.Children.Add(new TextBlock { Text = info.Value, TextWrapping = TextWrapping.Wrap });
-                            GameInfoList.Children.Add(panel);
-                        }
+                            if (!string.IsNullOrEmpty(details.HowToRunNote))
+                            {
+                                HowToRunSection.Visibility = Visibility.Visible;
+                                var html = $@"<html><head><style>
+                                    body {{ font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: transparent; padding: 0; margin: 0; overflow-x: hidden; }}
+                                    strong {{ color: #4facfe; }}
+                                    ul {{ padding-left: 20px; }}
+                                    li {{ margin-bottom: 8px; }}
+                                </style></head><body>{details.HowToRunNote}</body></html>";
 
-                        var localSpecs = HardwareSpecsEngine.GetLocalSpecs();
-                        foreach (var req in details.SystemRequirements)
-                        {
-                            var result = HardwareSpecsEngine.EvaluateRequirement(req.Key, req.Value, localSpecs, gf.RootPath);
-                            var icon = result == true ? "✅" : (result == false ? "❌" : "➖");
-                            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                            panel.Children.Add(new TextBlock { Text = icon, Width = 20 });
-                            panel.Children.Add(new TextBlock { Text = $"{req.Key}:", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Width = 100 });
-                            panel.Children.Add(new TextBlock { Text = req.Value, TextWrapping = TextWrapping.Wrap });
-                            RequirementsList.Children.Add(panel);
+                                try {
+                                    if (HowToRunWebView.CoreWebView2 == null) await HowToRunWebView.EnsureCoreWebView2Async();
+                                    if (HowToRunWebView.CoreWebView2 != null) HowToRunWebView.NavigateToString(html);
+                                } catch (Exception ex) { Logger.Log($"[Library] Inline WebView2 fail: {ex.Message}"); }
+                            }
+                            else
+                            {
+                                HowToRunSection.Visibility = Visibility.Collapsed;
+                            }
+
+                            foreach (var info in details.GameInfo)
+                            {
+                                infoItems.Add(new InfoItem { Key = info.Key, Value = info.Value });
+                            }
+
+                            var localSpecs = HardwareSpecsEngine.GetLocalSpecs();
+                            var reqItems = new System.Collections.Generic.List<ReqItem>();
+                            foreach (var req in details.SystemRequirements)
+                            {
+                                var result = HardwareSpecsEngine.EvaluateRequirement(req.Key, req.Value, localSpecs, gf.RootPath);
+                                var icon = result == true ? "✅" : "➖";
+                                int diff = HardwareSpecsEngine.GetRankDiff(req.Key, req.Value, localSpecs);
+                                reqItems.Add(new ReqItem {
+                                    Icon = icon,
+                                    Key = req.Key,
+                                    Value = req.Value,
+                                    RankDiff = diff
+                                });
+                            }
+                            RequirementsList.ItemsSource = reqItems;
                         }
                     } catch (Exception ex) {
                         Logger.LogError("LibraryPropsUI", ex);
@@ -457,15 +492,28 @@ namespace SteamRipApp
                 }
                 else
                 {
-                    var noUrlPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                    noUrlPanel.Children.Add(new TextBlock {
-                        Text = "⚠ No URL linked — use Manual Link below.",
-                        Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Orange)
-                    });
-                    GameInfoList.Children.Add(noUrlPanel);
+                    HowToRunSection.Visibility = Visibility.Collapsed;
+                    infoItems.Add(new InfoItem { Key = "Status", Value = "⚠ No URL linked — use Manual Link below." });
                 }
+
+                GameInfoList.ItemsSource = infoItems;
                 RequirementsLoading.IsActive = false;
             }
+        }
+
+        private void OpenInBrowser_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (LiveChatWebView.Source != null)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = LiveChatWebView.Source.ToString(),
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex) { Logger.LogError("OpenBrowser", ex); }
         }
 
         private async void LiveChatWebView_NavigationCompleted(WebView2 sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs args)
@@ -1761,12 +1809,17 @@ namespace SteamRipApp
 
                 gf.IsInProgress = true;
                 gf.ProgressPhase = "Repairing...";
+                gf.ProgressPercentage = 0;
+                gf.ProgressDetails = "Starting repair...";
 
                 await RepairService.PerformIntegrityRepairAsync(path, path, report, directUrl,
                     (status, pct) => DispatcherQueue.TryEnqueue(() => {
                         StatusLabel.Text = status;
                         _persistedStatusText = status;
 
+                        gf.ProgressPercentage = pct;
+                        gf.ProgressPhase = pct >= 100 ? "Extracting..." : "Downloading...";
+                        gf.ProgressDetails = status;
                     }));
 
                 gf.IsInProgress = false;

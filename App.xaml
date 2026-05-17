@@ -2,7 +2,8 @@
     x:Class="SteamRipApp.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:local="using:SteamRipApp">
+    xmlns:local="using:SteamRipApp"
+    xmlns:core="using:SteamRipApp.Core">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -10,6 +11,19 @@
 
             </ResourceDictionary.MergedDictionaries>
 
+            <core:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+            <core:BooleanToVisibilityConverter x:Key="BoolToVis" />
+            <core:BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+            <core:InvertedBooleanToVisibilityConverter x:Key="InvertedBooleanToVisibilityConverter" />
+            <core:InvertedBooleanToVisibilityConverter x:Key="InvertedBoolToVis" />
+            <core:SafeUriConverter x:Key="SafeUriConverter" />
+            <core:PhaseToColorConverter x:Key="PhaseToColorConverter" />
+            <core:RunningToColorConverter x:Key="RunningToColorConverter" />
+            <core:LaunchButtonBrushConverter x:Key="LaunchButtonBrushConverter" />
+            <core:RunningToStopWarningConverter x:Key="RunningToStopWarningConverter" />
+            <core:DoubleToStringConverter x:Key="DoubleToStringConverter" />
+            <core:PercentStringConverter x:Key="PercentStringConverter" />
+            <core:RunningToBorderThicknessConverter x:Key="RunningToBorderThicknessConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

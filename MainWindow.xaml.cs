@@ -413,7 +413,7 @@ namespace SteamRipApp
             }
         }
 
-        private const string CurrentAppVersion = "1.5.2.9";
+        private const string CurrentAppVersion = "1.6.0.5";
 
         private async System.Threading.Tasks.Task CheckFirstRunSetupAsync()
         {
@@ -570,6 +570,8 @@ namespace SteamRipApp
 
             UpdateAdvancedTabsVisibility();
 
+            _ = Task.Run(() => GameDatabaseService.RefreshNowAsync());
+
             try
             {
                 if (Directory.Exists(GlobalSettings.DownloadDirectory) &&
@@ -652,6 +654,283 @@ namespace SteamRipApp
                 NavView.IsHitTestVisible = true;
                 GlobalProgressOverlay.Visibility = Visibility.Collapsed;
                 _lastLegacyTask = null;
+            }
+        }
+
+        public void ShowGlobalDimmer() => GlobalWindowDimmer.Visibility = Visibility.Visible;
+        public void HideGlobalDimmer() => GlobalWindowDimmer.Visibility = Visibility.Collapsed;
+
+        private object? _currentGlobalPopupGame;
+        private Action<SearchResult>? _globalPopupDownloadAction;
+
+        private async Task EnsureWebViewReady(WebView2 webView)
+        {
+            if (webView.CoreWebView2 == null)
+            {
+                await webView.EnsureCoreWebView2Async();
+                if (webView.CoreWebView2 != null)
+                {
+                    webView.CoreWebView2.NewWindowRequested += (s, e) => {
+                        e.Handled = true;
+                        if (!string.IsNullOrEmpty(e.Uri)) {
+                            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = e.Uri, UseShellExecute = true }); } catch { }
+                        }
+                    };
+                }
+                webView.NavigationStarting += (s, e) => {
+                    if (e.Uri != null && e.Uri.StartsWith("http") && !e.Uri.Contains("steamrip.com"))
+                    {
+                        e.Cancel = true;
+                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = e.Uri, UseShellExecute = true }); } catch { }
+                    }
+                };
+            }
+        }
+
+        private string? _currentInstalledGamePath;
+
+        public async void ShowGameInfoPopup(object gameObj, Action<SearchResult> onDownload)
+        {
+            _currentGlobalPopupGame = gameObj;
+            _globalPopupDownloadAction = onDownload;
+
+            GlobalWindowDimmer.Visibility = Visibility.Visible;
+            GlobalGameInfoPopup.Visibility = Visibility.Visible;
+            GlobalPopupHowToRunSection.Visibility = Visibility.Collapsed;
+            GlobalPopupGameInfoList.ItemsSource = null;
+            GlobalPopupRequirementsList.ItemsSource = null;
+
+            string title = "";
+            string url = "";
+
+            if (gameObj is JsonGameEntry jg) { title = jg.name; url = jg.link; }
+            else if (gameObj is SearchResult sr) { title = sr.Title; url = sr.Url; }
+
+            var cleanTargetTitle = ScannerEngine.CleanTitle(title);
+            var installedMatch = GlobalSettings.Library.FirstOrDefault(m =>
+                (!string.IsNullOrEmpty(m.Url) && m.Url.Equals(url, StringComparison.OrdinalIgnoreCase)) ||
+                ScannerEngine.CleanTitle(m.Title).Equals(cleanTargetTitle, StringComparison.OrdinalIgnoreCase)
+            );
+
+            if (installedMatch != null)
+            {
+                GlobalPopupDownloadText.Text = "ReInstall Game";
+                _currentInstalledGamePath = installedMatch.LocalPath;
+            }
+            else
+            {
+                GlobalPopupDownloadText.Text = "Download Game";
+                _currentInstalledGamePath = null;
+            }
+
+            if (gameObj is JsonGameEntry jsonGame)
+            {
+                GlobalPopupTitle.Text = jsonGame.name;
+                GlobalPopupSubtitle.Text = jsonGame.version;
+                try {
+                    if (!string.IsNullOrEmpty(jsonGame.cover_image) && Uri.TryCreate(jsonGame.cover_image, UriKind.Absolute, out Uri? imgUri))
+                        GlobalPopupHeaderImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(imgUri);
+                } catch { }
+
+                GlobalPopupGameInfoText.Text = jsonGame.game_info;
+
+                if (!string.IsNullOrEmpty(jsonGame.how_to_run) || (jsonGame.warnings != null && jsonGame.warnings.Count > 0))
+                {
+                    GlobalPopupHowToRunSection.Visibility = Visibility.Visible;
+                    var warnHtml = jsonGame.warnings != null && jsonGame.warnings.Count > 0
+                        ? string.Join("<br>", jsonGame.warnings.Select(w => $"<strong>{w}</strong>")) + "<br><br>"
+                        : "";
+                    var html = $@"<html><head><style>
+                        body {{ font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: transparent; padding: 0; margin: 0; overflow-x: hidden; }}
+                        strong {{ color: #ff5252; font-weight: bold; }}
+                        ul {{ padding-left: 20px; }}
+                        li {{ margin-bottom: 8px; }}
+                        a {{ color: #58a6ff; text-decoration: none; }}
+                        a:hover {{ text-decoration: underline; }}
+                    </style></head><body>{warnHtml}{jsonGame.how_to_run}</body></html>";
+                    try {
+                        await EnsureWebViewReady(GlobalPopupHowToRunWebView);
+                        if (GlobalPopupHowToRunWebView.CoreWebView2 != null)
+                            GlobalPopupHowToRunWebView.NavigateToString(html);
+                    } catch { }
+                }
+
+                var infoItems = new System.Collections.Generic.List<InfoItem> {
+                    new InfoItem { Key = "Genre", Value = jsonGame.genre_string },
+                    new InfoItem { Key = "Developer", Value = jsonGame.developer },
+                    new InfoItem { Key = "Publisher", Value = jsonGame.publisher },
+                    new InfoItem { Key = "Game Size", Value = jsonGame.game_size },
+                    new InfoItem { Key = "Downloads", Value = jsonGame.downloads_count },
+                    new InfoItem { Key = "Uploaded", Value = jsonGame.upload_date_text }
+                };
+                GlobalPopupGameInfoList.ItemsSource = infoItems.Where(i => !string.IsNullOrEmpty(i.Value)).ToList();
+
+                var localSpecs = HardwareSpecsEngine.GetLocalSpecs();
+                var reqItems = new System.Collections.Generic.List<ReqItem>();
+                if (jsonGame.requirements != null)
+                {
+                    foreach (var reqLine in jsonGame.requirements)
+                    {
+                        var parts = reqLine.Split(new[] { ':' }, 2);
+                        var key = parts[0].Trim();
+                        var val = parts.Length > 1 ? parts[1].Trim() : "";
+                        var result = HardwareSpecsEngine.EvaluateRequirement(key, val, localSpecs,
+                            System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads"));
+                        var icon = result == true ? "✅" : "➖";
+                        int diff = HardwareSpecsEngine.GetRankDiff(key, val, localSpecs);
+                        reqItems.Add(new ReqItem { Icon = icon, Key = key, Value = val, RankDiff = diff });
+                    }
+                }
+                GlobalPopupRequirementsList.ItemsSource = reqItems;
+            }
+            else if (gameObj is SearchResult searchResult)
+            {
+                GlobalPopupTitle.Text = searchResult.Title;
+                GlobalPopupSubtitle.Text = searchResult.DateString;
+                try {
+                    if (!string.IsNullOrEmpty(searchResult.ImageUrl) && Uri.TryCreate(searchResult.ImageUrl, UriKind.Absolute, out Uri? imgUri))
+                        GlobalPopupHeaderImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(imgUri);
+                } catch { }
+
+                GlobalPopupGameInfoText.Text = "Loading details from SteamRip...";
+
+                try {
+                    var details = await SteamRipScraper.GetGameDetailsAsync(searchResult.Url);
+                    if (details != null)
+                    {
+                        GlobalPopupGameInfoText.Text = details.GameInfo.FirstOrDefault(i => i.Key.Contains("Description", StringComparison.OrdinalIgnoreCase)).Value ?? "No description available.";
+                        if (string.IsNullOrEmpty(GlobalPopupGameInfoText.Text) || GlobalPopupGameInfoText.Text == "No description available.")
+                        {
+                            GlobalPopupGameInfoText.Text = details.GameInfo.FirstOrDefault().Value ?? "No description available.";
+                        }
+
+                        if (!string.IsNullOrEmpty(details.HowToRunNote))
+                        {
+                            GlobalPopupHowToRunSection.Visibility = Visibility.Visible;
+                            var html = $@"<html><head><style>
+                                body {{ font-family: 'Segoe UI', sans-serif; font-size: 14px; color: #e0e0e0; background: transparent; padding: 0; margin: 0; overflow-x: hidden; }}
+                                strong {{ color: #ff5252; font-weight: bold; }}
+                                ul {{ padding-left: 20px; }}
+                                li {{ margin-bottom: 8px; }}
+                                a {{ color: #58a6ff; text-decoration: none; }}
+                                a:hover {{ text-decoration: underline; }}
+                            </style></head><body>{details.HowToRunNote}</body></html>";
+                            try {
+                                await EnsureWebViewReady(GlobalPopupHowToRunWebView);
+                                if (GlobalPopupHowToRunWebView.CoreWebView2 != null)
+                                    GlobalPopupHowToRunWebView.NavigateToString(html);
+                            } catch { }
+                        }
+
+                        var infoItems = new System.Collections.Generic.List<InfoItem>();
+                        foreach (var info in details.GameInfo)
+                        {
+                            infoItems.Add(new InfoItem { Key = info.Key, Value = info.Value });
+                        }
+                        GlobalPopupGameInfoList.ItemsSource = infoItems;
+
+                        var localSpecs = HardwareSpecsEngine.GetLocalSpecs();
+                        var reqItems = new System.Collections.Generic.List<ReqItem>();
+                        foreach (var req in details.SystemRequirements)
+                        {
+                            var result = HardwareSpecsEngine.EvaluateRequirement(req.Key, req.Value, localSpecs,
+                                System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads"));
+                            var icon = result == true ? "✅" : "➖";
+                            int diff = HardwareSpecsEngine.GetRankDiff(req.Key, req.Value, localSpecs);
+                            reqItems.Add(new ReqItem { Icon = icon, Key = req.Key, Value = req.Value, RankDiff = diff });
+                        }
+                        GlobalPopupRequirementsList.ItemsSource = reqItems;
+                    }
+                } catch { GlobalPopupGameInfoText.Text = "Failed to load details."; }
+            }
+        }
+
+        private void GlobalPopupClose_Click(object sender, RoutedEventArgs e)
+        {
+            GlobalWindowDimmer.Visibility = Visibility.Collapsed;
+            GlobalGameInfoPopup.Visibility = Visibility.Collapsed;
+        }
+
+        private void GlobalPopupOpenBrowser_Click(object sender, RoutedEventArgs e)
+        {
+            try {
+                string? url = null;
+                if (_currentGlobalPopupGame is JsonGameEntry jsonGame) url = jsonGame.link;
+                else if (_currentGlobalPopupGame is SearchResult searchResult) url = searchResult.Url;
+
+                if (!string.IsNullOrEmpty(url))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo {
+                        FileName = url,
+                        UseShellExecute = true
+                    });
+                }
+            } catch (Exception ex) { Logger.LogError("GlobalPopupOpenBrowser", ex); }
+        }
+
+        private async void GlobalPopupDownload_Click(object sender, RoutedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_currentInstalledGamePath) && Directory.Exists(_currentInstalledGamePath))
+            {
+                var repairDialog = new ContentDialog
+                {
+                    Title = "Game Already Installed",
+                    Content = "This game is already installed on your PC.\n\nInstead of re-downloading the entire game from scratch, you can use the Repair option in your Library to verify and fix any corrupted or missing files much faster.\n\nWould you like to continue re-installing anyway? (This will delete your existing game folder and re-download it).",
+                    PrimaryButtonText = "Continue Anyway",
+                    SecondaryButtonText = "Cancel (Use Repair)",
+                    DefaultButton = ContentDialogButton.Secondary,
+                    XamlRoot = this.Content.XamlRoot
+                };
+
+                var result = await App.ShowDialogSafeAsync(repairDialog);
+                if (result != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+
+                GlobalWindowDimmer.Visibility = Visibility.Collapsed;
+                GlobalGameInfoPopup.Visibility = Visibility.Collapsed;
+
+                try {
+                    Logger.Log($"[GlobalPopup] Deleting existing game folder for re-install: {_currentInstalledGamePath}");
+                    RepairService.StopHashingForGame(_currentInstalledGamePath);
+                    var pathToDelete = _currentInstalledGamePath;
+                    await Task.Run(() => {
+                        if (Directory.Exists(pathToDelete))
+                            Directory.Delete(pathToDelete, recursive: true);
+                    });
+                    var meta = GlobalSettings.Library.FirstOrDefault(m => m.LocalPath.Equals(pathToDelete, StringComparison.OrdinalIgnoreCase));
+                    if (meta != null) GlobalSettings.Library.Remove(meta);
+                    GlobalSettings.GamePageLinks.Remove(pathToDelete);
+                    GlobalSettings.Save();
+                } catch (Exception ex) {
+                    Logger.LogError("ReInstallDelete", ex);
+                }
+            }
+            else
+            {
+                GlobalWindowDimmer.Visibility = Visibility.Collapsed;
+                GlobalGameInfoPopup.Visibility = Visibility.Collapsed;
+            }
+
+            SearchResult? targetResult = null;
+            if (_currentGlobalPopupGame is JsonGameEntry jsonGame)
+            {
+                targetResult = new SearchResult {
+                    Title = jsonGame.name,
+                    Url = jsonGame.link,
+                    ImageUrl = jsonGame.cover_image,
+                    DateString = jsonGame.version
+                };
+            }
+            else if (_currentGlobalPopupGame is SearchResult searchResult)
+            {
+                targetResult = searchResult;
+            }
+
+            if (targetResult != null)
+            {
+                _globalPopupDownloadAction?.Invoke(targetResult);
             }
         }
 

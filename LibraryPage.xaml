@@ -377,45 +377,156 @@
             </StackPanel>
         </Grid>
 
-        <Grid x:Name="PropertiesOverlayDimmer" Background="#80000000" Visibility="Collapsed" Grid.RowSpan="2"/>
+        <Grid x:Name="PropertiesOverlayDimmer" Background="#CC000000" Visibility="Collapsed" Grid.RowSpan="2"/>
         <Grid x:Name="PropertiesDialog" Background="{ThemeResource SystemControlBackgroundAltHighBrush}"
-              Width="1100" Height="700" CornerRadius="8" Visibility="Collapsed" Grid.RowSpan="2"
-              HorizontalAlignment="Center" VerticalAlignment="Center">
+              MaxWidth="1200" Margin="24" Height="800" CornerRadius="12" Visibility="Collapsed" Grid.RowSpan="2"
+              HorizontalAlignment="Stretch" VerticalAlignment="Center"
+              BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <TextBlock x:Name="PropsTitle" Text="Game Properties" FontSize="20" FontWeight="Bold" Margin="24,20,24,0"/>
+            <Grid Height="120" CornerRadius="12,12,0,0">
+                <Grid.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#FF1A1A2E" Offset="0"/>
+                        <GradientStop Color="#FF16213E" Offset="1"/>
+                    </LinearGradientBrush>
+                </Grid.Background>
+                <StackPanel Orientation="Horizontal" Margin="24,0" VerticalAlignment="Center" Spacing="20">
+                    <Border Width="160" Height="90" CornerRadius="8" Background="#20FFFFFF">
+                        <Image x:Name="PropsHeaderImage" Stretch="UniformToFill"/>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Spacing="4">
+                        <TextBlock x:Name="PropsTitle" Text="Game Properties" FontSize="28" FontWeight="Bold" Foreground="White"/>
+                        <TextBlock x:Name="PropsSubtitle" Text="SteamRIP Installed Game" FontSize="14" Opacity="0.7" Foreground="White"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
 
-            <Grid Grid.Row="1" Margin="24,12,24,0">
+            <Grid Grid.Row="1" Margin="24,20,24,0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="310"/>
+                    <ColumnDefinition Width="380"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <ScrollViewer Margin="0,0,8,0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="📋 Game Info" FontWeight="SemiBold" FontSize="15"/>
-                        <StackPanel x:Name="GameInfoList" Spacing="6"/>
+                <ScrollViewer Margin="0,0,16,0" VerticalScrollBarVisibility="Auto" Padding="0,0,12,0">
+                    <StackPanel Spacing="24">
 
-                        <Button Content="🔗 Manual Link" Click="ManualLinkBtn_Click"
-                                HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        <Border x:Name="HowToRunSection" Visibility="Collapsed"
+                                Background="#1A0078D4" BorderBrush="#330078D4"
+                                BorderThickness="1" CornerRadius="8" Padding="16">
+                            <StackPanel Spacing="8">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="18" Foreground="#0078D4"/>
+                                    <TextBlock Text="Installation Notes" FontWeight="Bold" FontSize="16"/>
+                                </StackPanel>
+                                <WebView2 x:Name="HowToRunWebView" Height="200" HorizontalAlignment="Stretch"
+                                          DefaultBackgroundColor="Transparent"/>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock Text="⚙️ System Requirements" FontWeight="SemiBold" FontSize="15" Margin="0,12,0,0"/>
-                        <StackPanel x:Name="RequirementsList" Spacing="6"/>
-                        <ProgressRing x:Name="RequirementsLoading" IsActive="False" Width="24" Height="24" HorizontalAlignment="Left"/>
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="📋 Technical Details" FontWeight="SemiBold" FontSize="16" Opacity="0.8"/>
+                            <ItemsControl x:Name="GameInfoList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Key}" FontWeight="SemiBold" Opacity="0.6" FontSize="12"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" FontSize="12"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="⚙️ System Requirements" FontWeight="SemiBold" FontSize="16" Opacity="0.8"/>
+                                <ItemsControl x:Name="RequirementsList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="24"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Icon}" FontSize="12" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                                <StackPanel Grid.Column="1" Spacing="2">
+                                                    <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="12"/>
+                                                    <TextBlock Text="{Binding Value}" TextWrapping="Wrap" FontSize="11" Opacity="0.7"/>
+                                                </StackPanel>
+
+                                                <Button Grid.Column="2" Background="Transparent" BorderThickness="0" Padding="4"
+                                                        VerticalAlignment="Top" HorizontalAlignment="Right"
+                                                        Visibility="{Binding HasRankDiff, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <FontIcon Glyph="&#xE946;" Opacity="0.5" FontSize="14"/>
+                                                    <ToolTipService.ToolTip>
+                                                        <ToolTip Content="{Binding RankText}" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"/>
+                                                    </ToolTipService.ToolTip>
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            <ProgressRing x:Name="RequirementsLoading" IsActive="False" Width="24" Height="24" HorizontalAlignment="Center" Margin="0,10"/>
+                        </StackPanel>
+
                     </StackPanel>
                 </ScrollViewer>
 
-                <Border Grid.Column="1" BorderBrush="{ThemeResource SystemControlBackgroundBaseLowBrush}" BorderThickness="1" CornerRadius="4">
-                    <WebView2 x:Name="LiveChatWebView" NavigationCompleted="LiveChatWebView_NavigationCompleted"/>
-                </Border>
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}" Padding="12,8" CornerRadius="8,8,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <SymbolIcon Symbol="Globe" Opacity="0.6"/>
+                            <TextBlock Text="SteamRIP Page Preview" FontSize="12" FontWeight="SemiBold" Opacity="0.6"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="1" BorderBrush="{ThemeResource SystemControlBackgroundChromeMediumBrush}"
+                            BorderThickness="1,0,1,1" CornerRadius="0,0,8,8">
+                        <WebView2 x:Name="LiveChatWebView" NavigationCompleted="LiveChatWebView_NavigationCompleted"/>
+                    </Border>
+                </Grid>
             </Grid>
 
-            <Button Grid.Row="2" Content="Close" Click="PropsCancelBtn_Click"
-                    HorizontalAlignment="Right" Margin="24,12,24,16"/>
+            <Grid Grid.Row="2" Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}" Padding="24,16" CornerRadius="0,0,12,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Click="OpenInBrowser_Click"
+                            Background="Transparent" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <SymbolIcon Symbol="World"/>
+                            <TextBlock Text="View Original Page"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Click="ManualLinkBtn_Click"
+                            Background="Transparent" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <SymbolIcon Symbol="Link"/>
+                            <TextBlock Text="Manual Link"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Button Grid.Column="1" Content="Close Properties" Click="PropsCancelBtn_Click"
+                        Style="{StaticResource AccentButtonStyle}" Padding="24,8"/>
+            </Grid>
         </Grid>
 
         <Grid x:Name="LinkSearchOverlay" Background="#A0000000" Visibility="Collapsed" Grid.RowSpan="2"/>
